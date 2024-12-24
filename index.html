@@ -60,14 +60,14 @@
                 try {
                     setLoading(true);
                     setError(null);
-                    
-                    const fullPath = window.location.origin + '/fr/Numbers.csv';
-                    const response = await fetch(fullPath);
-                    
+        
+                    // Change from '/fr/Numbers.csv' to just '/Numbers.csv'
+                    const response = await fetch('/Numbers.csv');
+        
                     if (!response.ok) {
                         throw new Error(`Failed to load CSV file: ${response.status} ${response.statusText}`);
                     }
-                    
+        
                     const text = await response.text();
                     processCSVData(text);
                 } catch (error) {
