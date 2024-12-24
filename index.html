@@ -4,37 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Yeat Stats</title>
-    <!-- Different CDN for PapaParse -->
     <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
-    <!-- Directly using React from unpkg -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <script>
-        // Check if all required libraries are loaded
-        window.addEventListener('load', function() {
-            const requiredLibs = {
-                'Papa': typeof Papa !== 'undefined',
-                'React': typeof React !== 'undefined',
-                'ReactDOM': typeof ReactDOM !== 'undefined',
-                'Babel': typeof Babel !== 'undefined'
-            };
-
-            const missingLibs = Object.entries(requiredLibs)
-                .filter(([, loaded]) => !loaded)
-                .map(([name]) => name);
-
-            if (missingLibs.length > 0) {
-                console.error('Missing libraries:', missingLibs);
-                document.body.innerHTML = `<div style="color: white; padding: 20px;">
-                    Error: Required libraries failed to load (${missingLibs.join(', ')}). 
-                    Please refresh the page. If the error persists, try clearing your browser cache.
-                </div>`;
-            }
-        });
-    </script>
 </head>
 <body class="bg-gray-900">
     <div id="root"></div>
@@ -80,9 +54,8 @@
                     setLoading(true);
                     setError(null);
                     
-                    // Get the base path from the current URL
-                    const basePath = '/fr'; // Since your site is at treat3d6.github.io/bruh/
-                    const response = await fetch(`${basePath}/Numbers.csv`);
+                    const fullPath = window.location.origin + '/fr/Numbers.csv';
+                    const response = await fetch(fullPath);
                     
                     if (!response.ok) {
                         throw new Error(`Failed to load CSV file: ${response.status} ${response.statusText}`);
@@ -369,28 +342,11 @@
                 </div>
             );
         };
-        document.addEventListener('DOMContentLoaded', function() {
-            try {
-                if (typeof React === 'undefined') {
-                    throw new Error('React is not loaded');
-                }
-                if (typeof ReactDOM === 'undefined') {
-                    throw new Error('ReactDOM is not loaded');
-                }
-                if (typeof Papa === 'undefined') {
-                    throw new Error('PapaParse is not loaded');
-                }
 
-                const root = ReactDOM.createRoot(document.getElementById('root'));
-                root.render(<YeatStats />);
-            } catch (error) {
-                console.error('Failed to render app:', error);
-                document.getElementById('root').innerHTML = `
-                    <div style="color: white; padding: 20px;">
-                        Error: Failed to load application (${error.message}). 
-                        Please refresh the page or check the console for details.
-                    </div>`;
-            }
+        // Initialize the app once everything is loaded
+        window.addEventListener('load', function() {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<YeatStats />);
         });
     </script>
 </body>
