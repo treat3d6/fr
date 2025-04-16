@@ -25,6 +25,13 @@
             }
             .chart-container {
                 height: 40vh !important;
+                position: relative;
+            }
+        }
+        @media (min-width: 641px) {
+            .chart-container {
+                height: 45vh !important;
+                position: relative;
             }
         }
         .modal-overlay {
@@ -61,6 +68,32 @@
             cursor: pointer;
             padding: 0.5rem;
         }
+        .autocomplete-suggestions {
+            position: absolute;
+            background: black;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 0.5rem;
+            max-height: 200px;
+            overflow-y: auto;
+            width: calc(100% - 2rem);
+            z-index: 1001;
+        }
+        .suggestion-item {
+            padding: 0.5rem 1rem;
+            color: white;
+            cursor: pointer;
+        }
+        .suggestion-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .percentage-change {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+        }
     </style>
 </head>
 <body class="bg-black">
@@ -76,9 +109,10 @@
             });
             const [songs, setSongs] = React.useState([]);
             const [historyData, setHistoryData] = React.useState({});
+            const [albumHistoryData, setAlbumHistoryData] = React.useState({});
             const [loading, setLoading] = React.useState(true);
             const [error, setError] = React.useState(null);
-            const [selectedSong, setSelectedSong] = React.useState(null);
+            const [selectedItems, setSelectedItems] = React.useState([]);
             const [latestDate, setLatestDate] = React.useState(null);
             const [statsData, setStatsData] = React.useState({
                 headers: ['Total', 'Lead', 'Solo', 'Features'],
@@ -103,6 +137,7 @@
 
             React.useEffect(() => {
                 setHistoryData({});
+                setAlbumHistoryData({});
                 loadAllData();
             }, []);
 
@@ -112,6 +147,7 @@
                     setError(null);
 
                     const rawHistory = {};
+                    const rawAlbumHistory = {};
                     let earliestDate = null;
                     let latestDate = null;
                     let latestResponse = null;
@@ -151,18 +187,34 @@
                                 parsedData.forEach(row => {
                                     const title = row.Song || '';
                                     const album = row.Album || '';
-                                    const daily = parseInt((row['Spotify daily'] || '0').replace(/,/g, '')) || 0;
-                                    if (title && daily > 0) {
-                                        const key = title.toLowerCase() === 'already rich' ? 'Already Rich' : `${title}|${album}`;
-                                        if (!rawHistory[key]) {
-                                            rawHistory[key] = [];
+                                    const daily = parseInt((row['Spotify daily'] || '').replace(/,/g, '')) || null;
+                                    const total = parseInt((row['Spotify total'] || '').replace(/,/g, '')) || null;
+                                    if (title && album && daily !== null && total !== null) {
+                                        const songKey = title.toLowerCase() === 'already rich' ? 'Already Rich' : `${title}|${album}`;
+                                        if (!rawHistory[songKey]) {
+                                            rawHistory[songKey] = [];
                                         }
-                                        rawHistory[key].push({
+                                        rawHistory[songKey].push({
                                             date: dateStr,
-                                            streams: parseInt((row['Spotify total'] || '0').replace(/,/g, '')) || 0,
+                                            streams: total,
                                             daily: daily,
                                             album: album
                                         });
+
+                                        if (!rawAlbumHistory[album]) {
+                                            rawAlbumHistory[album] = [];
+                                        }
+                                        const existingAlbumEntry = rawAlbumHistory[album].find(e => e.date === dateStr);
+                                        if (existingAlbumEntry) {
+                                            existingAlbumEntry.streams += total;
+                                            existingAlbumEntry.daily += daily;
+                                        } else {
+                                            rawAlbumHistory[album].push({
+                                                date: dateStr,
+                                                streams: total,
+                                                daily: daily
+                                            });
+                                        }
                                     }
                                 });
 
@@ -185,23 +237,25 @@
                     }
 
                     if (!latestResponse) {
-                        throw new Error('No CSV files found in the repository. Please check the file paths and ensure the CSV files are accessible. Expected files like 2024-01-01.csv to 2025-04-14.csv in the root directory.');
+                        throw new Error('No CSV files found in the repository.');
                     }
 
                     const history = {};
                     Object.keys(rawHistory).forEach(key => {
                         history[key] = rawHistory[key].sort((a, b) => new Date(a.date) - new Date(b.date));
-                        if (history[key].length > 0) {
-                            console.log(`Song: ${key}, Date range: ${history[key][0].date} to ${history[key][history[key].length - 1].date}`);
-                        }
                     });
 
-                    console.log(`Processed ${fileCount} CSV files. Dates processed: ${processedDates.sort().join(', ')}`);
-                    console.log(`Earliest date: ${earliestDate}, Latest date: ${latestDate}`);
+                    const albumHistory = {};
+                    Object.keys(rawAlbumHistory).forEach(key => {
+                        albumHistory[key] = rawAlbumHistory[key].sort((a, b) => new Date(a.date) - new Date(b.date));
+                    });
+
+                    console.log(`Processed ${fileCount} CSV files. Dates: ${processedDates.sort().join(', ')}`);
 
                     const latestText = await latestResponse.text();
                     processCSVData(latestText);
                     setHistoryData(history);
+                    setAlbumHistoryData(albumHistory);
                     setLatestDate(latestDate);
                 } catch (error) {
                     console.error('Error loading data:', error);
@@ -227,7 +281,7 @@
                             const title = row.Song || '';
                             const album = row.Album || '';
                             const daily = parseInt((row['Spotify daily'] || '0').replace(/,/g, '')) || 0;
-                            if (title && daily > 0) {
+                            if (title) {
                                 const key = title.toLowerCase() === 'already rich' ? 'Already Rich' : `${title}|${album}`;
                                 if (!songMap[key]) {
                                     songMap[key] = {
@@ -242,7 +296,7 @@
                             }
                         });
 
-                        const processedSongs = Object.values(songMap).filter(song => song.streams && song.daily);
+                        const processedSongs = Object.values(songMap).filter(song => song.streams || song.daily);
                         setSongs(processedSongs);
                         calculateStats(processedSongs);
                     },
@@ -275,18 +329,9 @@
                 setStatsData({
                     headers: statsData.headers,
                     rows: [
-                        {
-                            label: 'Streams',
-                            values: [totalStreams, leadStreams, soloStreams, featureStreams]
-                        },
-                        {
-                            label: 'Daily',
-                            values: [totalDaily, leadDaily, soloDaily, featureDaily]
-                        },
-                        {
-                            label: 'Tracks',
-                            values: [totalTracks, leadCount, soloCount, featureCount]
-                        }
+                        { label: 'Streams', values: [totalStreams, leadStreams, soloStreams, featureStreams] },
+                        { label: 'Daily', values: [totalDaily, leadDaily, soloDaily, featureDaily] },
+                        { label: 'Tracks', values: [totalTracks, leadCount, soloCount, featureCount] }
                     ]
                 });
 
@@ -302,7 +347,7 @@
                 setAlbums(albumStats);
             };
 
-            const SongChart = ({ songTitle, onClose }) => {
+            const ComparisonChart = ({ itemKeys, itemsData, historyData, isAlbum, onClose }) => {
                 const chartRef = React.useRef(null);
                 const canvasRef = React.useRef(null);
                 const [dateRange, setDateRange] = React.useState('all');
@@ -312,21 +357,29 @@
                 const [tempEndDate, setTempEndDate] = React.useState('');
                 const [showCustomPicker, setShowCustomPicker] = React.useState(false);
                 const [chartError, setChartError] = React.useState(null);
+                const [compareItems, setCompareItems] = React.useState(itemKeys);
+                const [searchCompare, setSearchCompare] = React.useState('');
+                const [showSuggestions, setShowSuggestions] = React.useState(false);
+                const [dateLabels, setDateLabels] = React.useState([]);
 
-                const [title, album] = songTitle.split('|');
-                const historyKey = title.toLowerCase() === 'already rich' ? 'Already Rich' : songTitle;
+                const colors = [
+                    '#60A5FA', '#F87171', '#34D399', '#FBBF24', '#A78BFA',
+                    '#EC4899', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444'
+                ];
 
-                const validateDates = (start, end) => {
-                    if (!start || !end || !historyData[historyKey]) return false;
+                const validateDates = (start, end, histories) => {
+                    if (!start || !end || !histories || !histories.length) return false;
                     try {
                         const startDate = new Date(start);
                         const endDate = new Date(end);
-                        const minDate = new Date(historyData[historyKey][0].date);
-                        const maxDate = new Date(historyData[historyKey][historyData[historyKey].length - 1].date);
-                        return !isNaN(startDate) && !isNaN(endDate) && 
-                               startDate <= endDate && 
-                               startDate >= minDate && 
-                               endDate <= maxDate;
+                        if (isNaN(startDate) || isNaN(endDate) || startDate > endDate) return false;
+
+                        return histories.every(history => {
+                            if (!history || !history.length) return false;
+                            const minDate = new Date(history[0].date);
+                            const maxDate = new Date(history[history.length - 1].date);
+                            return startDate >= minDate && endDate <= maxDate;
+                        });
                     } catch (e) {
                         console.error('Date validation error:', e);
                         return false;
@@ -334,64 +387,173 @@
                 };
 
                 const handleApplyCustomDates = () => {
-                    if (validateDates(tempStartDate, tempEndDate)) {
+                    const histories = compareItems.map(key => historyData[key]).filter(Boolean);
+                    if (validateDates(tempStartDate, tempEndDate, histories)) {
                         setCustomStartDate(tempStartDate);
                         setCustomEndDate(tempEndDate);
                         setChartError(null);
                     } else {
-                        setChartError('Invalid date range. Please select valid dates within the available data.');
+                        setChartError('Invalid date range. Please select dates within the available data.');
                     }
                 };
 
+                const handleItemSelect = (key) => {
+                    if (!compareItems.includes(key) && compareItems.length < 5) {
+                        const newCompareItems = [...compareItems, key];
+                        setCompareItems(newCompareItems);
+                        setSearchCompare('');
+                        setShowSuggestions(false);
+
+                        const histories = newCompareItems.map(k => historyData[k]).filter(Boolean);
+                        if (customStartDate && customEndDate && !validateDates(customStartDate, customEndDate, histories)) {
+                            setCustomStartDate('');
+                            setCustomEndDate('');
+                            setTempStartDate('');
+                            setTempEndDate('');
+                            setDateRange('all');
+                            setShowCustomPicker(false);
+                        }
+                    }
+                };
+
+                const handleItemRemove = (key) => {
+                    const newCompareItems = compareItems.filter(k => k !== key);
+                    setCompareItems(newCompareItems);
+
+                    const histories = newCompareItems.map(k => historyData[k]).filter(Boolean);
+                    if (customStartDate && customEndDate && !validateDates(customStartDate, customEndDate, histories)) {
+                        setCustomStartDate('');
+                        setCustomEndDate('');
+                        setTempStartDate('');
+                        setTempEndDate('');
+                        setDateRange('all');
+                        setShowCustomPicker(false);
+                    }
+                };
+
+                const filteredItems = itemsData.filter(item => 
+                    item.title.toLowerCase().includes(searchCompare.toLowerCase()) &&
+                    !compareItems.includes(isAlbum ? item.title : (item.title.toLowerCase() === 'already rich' ? 'Already Rich' : `${item.title}|${item.album}`))
+                );
+
+                const calculateOverallPercentageChange = (history, dateLabels) => {
+                    if (!history || history.length < 1 || !dateLabels || dateLabels.length < 1) return null;
+                    const firstDate = new Date(dateLabels[0]);
+                    const lastDate = new Date(dateLabels[dateLabels.length - 1]);
+                    const firstEntry = history.find(e => new Date(e.date).toDateString() === firstDate.toDateString());
+                    const lastEntry = history.find(e => new Date(e.date).toDateString() === lastDate.toDateString());
+                    const firstDaily = firstEntry ? firstEntry.daily || 0 : 0;
+                    const lastDaily = lastEntry ? lastEntry.daily || 0 : 0;
+
+                    if (firstDaily === 0 && lastDaily === 0) return '0.00';
+                    if (firstDaily === 0 && lastDaily !== 0) return 'N/A (First day was 0)';
+                    if (firstDaily !== 0) {
+                        const change = ((lastDaily - firstDaily) / firstDaily) * 100;
+                        return change.toFixed(2);
+                    }
+                    return null;
+                };
+
                 React.useEffect(() => {
-                    if (!historyKey || !historyData[historyKey] || !historyData[historyKey].length) {
-                        setChartError('No data available for this song.');
+                    if (!historyData || Object.keys(historyData).length === 0 || !compareItems.length) {
+                        setChartError('No data available for comparison.');
+                        setDateLabels([]);
                         return;
                     }
 
                     try {
-                        let history = historyData[historyKey];
-                        let startDate, endDate;
+                        const allItemDates = new Set();
+                        compareItems.forEach(key => {
+                            const history = historyData[key] || [];
+                            history.forEach(entry => allItemDates.add(entry.date));
+                        });
 
-                        if (dateRange === 'custom' && customStartDate && customEndDate && validateDates(customStartDate, customEndDate)) {
+                        let minDate = null;
+                        let maxDate = null;
+                        compareItems.forEach(key => {
+                            const history = historyData[key] || [];
+                            if (history.length) {
+                                const firstDate = new Date(history[0].date);
+                                const lastDate = new Date(history[history.length - 1].date);
+                                minDate = minDate ? new Date(Math.min(minDate, firstDate)) : firstDate;
+                                maxDate = maxDate ? new Date(Math.max(maxDate, lastDate)) : lastDate;
+                            }
+                        });
+
+                        let startDate, endDate;
+                        const histories = compareItems.map(key => historyData[key]).filter(Boolean);
+                        if (dateRange === 'custom' && customStartDate && customEndDate && 
+                            validateDates(customStartDate, customEndDate, histories)) {
                             startDate = new Date(customStartDate);
                             endDate = new Date(customEndDate);
                         } else {
-                            endDate = new Date(history[history.length - 1].date + 'T00:00:00Z');
+                            endDate = maxDate;
                             if (dateRange === 'all') {
-                                startDate = new Date(history[0].date + 'T00:00:00Z');
+                                startDate = minDate;
                             } else {
-                                const days = parseInt(dateRange);
+                                const days = parseInt(dateRange) || 7;
                                 startDate = new Date(endDate);
                                 startDate.setDate(endDate.getDate() - days + 1);
                             }
                         }
 
-                        console.log(`Rendering chart for ${historyKey} between ${startDate.toISOString().split('T')[0]} and ${endDate.toISOString().split('T')[0]}`);
+                        const newDateLabels = Array.from(allItemDates)
+                            .filter(date => {
+                                const d = new Date(date);
+                                return d >= startDate && d <= endDate;
+                            })
+                            .sort((a, b) => new Date(a) - new Date(b));
 
-                        history = history.filter(entry => {
-                            const entryDate = new Date(entry.date + 'T00:00:00Z');
-                            return entryDate >= startDate && entryDate <= endDate;
-                        });
-
-                        if (history.length === 0) {
+                        if (newDateLabels.length === 0) {
                             setChartError('No data available for the selected date range.');
+                            setDateLabels([]);
                             return;
                         }
 
-                        const labels = history.map(entry => {
-                            const date = new Date(entry.date + 'T00:00:00Z');
-                            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+                        const allLabels = newDateLabels.map(date => {
+                            const d = new Date(date);
+                            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
                         });
-                        const dailyData = history.map(entry => entry.daily);
-                        const totalStreamsData = history.map(entry => entry.streams);
 
-                        if (!labels.length || !dailyData.length) {
-                            setChartError('Insufficient data to render chart.');
+                        const datasets = compareItems.map((key, index) => {
+                            const history = historyData[key] || [];
+                            if (!history.length) return null;
+
+                            const label = isAlbum ? key : (() => {
+                                const [title, album] = key.split('|');
+                                return `${title.toLowerCase() === 'already rich' ? 'Already Rich' : title} (${album})`;
+                            })();
+
+                            const dailyData = newDateLabels.map(date => {
+                                const entry = history.find(e => e.date === date);
+                                return entry ? entry.daily : null;
+                            });
+
+                            return {
+                                label,
+                                data: dailyData,
+                                borderColor: colors[index % colors.length],
+                                backgroundColor: colors[index % colors.length] + '33',
+                                fill: true,
+                                tension: 0.3,
+                                pointRadius: 0,
+                                borderWidth: 2,
+                                spanGaps: true
+                            };
+                        }).filter(ds => ds !== null);
+
+                        if (!allLabels.length || !datasets.length) {
+                            setChartError('No data available for the selected date range.');
+                            setDateLabels([]);
                             return;
                         }
 
-                        const ctx = canvasRef.current.getContext('2d');
+                        const ctx = canvasRef.current?.getContext('2d');
+                        if (!ctx) {
+                            setChartError('Failed to initialize chart.');
+                            setDateLabels([]);
+                            return;
+                        }
 
                         if (chartRef.current) {
                             chartRef.current.destroy();
@@ -400,19 +562,8 @@
                         chartRef.current = new Chart(ctx, {
                             type: 'line',
                             data: {
-                                labels: labels,
-                                datasets: [
-                                    {
-                                        label: 'Daily Streams',
-                                        data: dailyData,
-                                        borderColor: '#60A5FA',
-                                        backgroundColor: 'rgba(96, 165, 250, 0.2)',
-                                        fill: true,
-                                        tension: 0.3,
-                                        pointRadius: 0,
-                                        borderWidth: 2
-                                    }
-                                ]
+                                labels: allLabels,
+                                datasets
                             },
                             options: {
                                 responsive: true,
@@ -421,40 +572,33 @@
                                     x: {
                                         ticks: {
                                             color: '#ffffff',
-                                            font: {
-                                                size: 12
-                                            },
+                                            font: { size: 12 },
                                             maxRotation: 45,
                                             minRotation: 45
                                         },
-                                        grid: {
-                                            color: 'rgba(255, 255, 255, 0.1)'
-                                        }
+                                        grid: { color: 'rgba(255, 255, 255, 0.1)' }
                                     },
                                     y: {
-                                        title: {
-                                            display: false
-                                        },
+                                        title: { display: false },
                                         ticks: {
                                             color: '#ffffff',
-                                            font: {
-                                                size: 12
-                                            },
-                                            callback: (value) => value.toLocaleString()
+                                            font: { size: 12 },
+                                            callback: (value) => value ? value.toLocaleString() : ''
                                         },
-                                        grid: {
-                                            color: 'rgba(255, 255, 255, 0.1)'
-                                        },
+                                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
                                         beginAtZero: true
                                     }
                                 },
                                 plugins: {
                                     legend: {
-                                        display: false
+                                        display: true,
+                                        position: 'top',
+                                        labels: {
+                                            color: '#ffffff',
+                                            font: { size: 12 }
+                                        }
                                     },
-                                    title: {
-                                        display: false
-                                    },
+                                    title: { display: false },
                                     tooltip: {
                                         enabled: true,
                                         backgroundColor: '#1f2937',
@@ -463,14 +607,20 @@
                                         borderColor: '#4b5563',
                                         borderWidth: 1,
                                         cornerRadius: 4,
-                                        displayColors: false,
-                                        caretSize: 0,
+                                        displayColors: true,
                                         callbacks: {
-                                            label: (context) => [
-                                                `Daily: ${context.parsed.y.toLocaleString()}`,
-                                                `Total: ${totalStreamsData[context.dataIndex].toLocaleString()}`
-                                            ],
-                                            title: (tooltipItems) => tooltipItems[0].label
+                                            label: (context) => {
+                                                const datasetIndex = context.datasetIndex;
+                                                const dataIndex = context.dataIndex;
+                                                const key = compareItems[datasetIndex];
+                                                const history = historyData[key] || [];
+                                                const date = newDateLabels[dataIndex];
+                                                const entry = history.find(e => e.date === date);
+                                                return [
+                                                    `Daily: ${context.parsed.y?.toLocaleString() || 'N/A'}`,
+                                                    `Total: ${entry?.streams?.toLocaleString() || 'N/A'}`
+                                                ];
+                                            }
                                         }
                                     }
                                 },
@@ -483,32 +633,45 @@
                         });
 
                         setChartError(null);
+                        setDateLabels(newDateLabels);
 
-                        return () => {
-                            if (chartRef.current) {
-                                chartRef.current.destroy();
-                            }
-                        };
                     } catch (e) {
-                        console.error('Chart rendering error:', e);
-                        setChartError('Failed to render chart. Please try a different date range.');
+                        console.error('Chart rendering error:', e.message, e.stack);
+                        setChartError('Failed to render chart. Please try again.');
+                        setDateLabels([]);
                     }
-                }, [historyKey, dateRange, customStartDate, customEndDate]);
+                }, [compareItems, dateRange, customStartDate, customEndDate, historyData, isAlbum]);
 
                 const getDateRangeText = () => {
-                    if (!historyData[historyKey] || !historyData[historyKey].length) return 'No data available';
-                    let history = historyData[historyKey];
-                    let startDate, endDate;
+                    if (!compareItems.length || compareItems.some(key => !historyData[key] || !historyData[key].length)) 
+                        return 'No data available';
 
-                    if (dateRange === 'custom' && customStartDate && customEndDate && validateDates(customStartDate, customEndDate)) {
-                        startDate = new Date(customStartDate + 'T00:00:00Z');
-                        endDate = new Date(customEndDate + 'T00:00:00Z');
+                    let minDate = null;
+                    let maxDate = null;
+                    compareItems.forEach(key => {
+                        const history = historyData[key] || [];
+                        if (history.length) {
+                            const firstDate = new Date(history[0].date);
+                            const lastDate = new Date(history[history.length - 1].date);
+                            minDate = minDate ? new Date(Math.min(minDate, firstDate)) : firstDate;
+                            maxDate = maxDate ? new Date(Math.max(maxDate, lastDate)) : lastDate;
+                        }
+                    });
+
+                    if (!minDate || !maxDate) return 'No data available';
+
+                    let startDate, endDate;
+                    const histories = compareItems.map(key => historyData[key]).filter(Boolean);
+                    if (dateRange === 'custom' && customStartDate && customEndDate && 
+                        validateDates(customStartDate, customEndDate, histories)) {
+                        startDate = new Date(customStartDate);
+                        endDate = new Date(customEndDate);
                     } else {
-                        endDate = new Date(history[history.length - 1].date + 'T00:00:00Z');
+                        endDate = maxDate;
                         if (dateRange === 'all') {
-                            startDate = new Date(history[0].date + 'T00:00:00Z');
+                            startDate = minDate;
                         } else {
-                            const days = parseInt(dateRange);
+                            const days = parseInt(dateRange) || 7;
                             startDate = new Date(endDate);
                             startDate.setDate(endDate.getDate() - days + 1);
                         }
@@ -517,47 +680,13 @@
                     return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}`;
                 };
 
-                const getCurrentTotalStreams = () => {
-                    if (!historyData[historyKey] || !historyData[historyKey].length) return 0;
-                    const history = historyData[historyKey];
-                    return history[history.length - 1].streams;
-                };
-
-                const getPercentageChange = () => {
-                    if (!historyData[historyKey] || !historyData[historyKey].length) return { percentage: 0, isIncrease: true };
-                    let history = historyData[historyKey];
-                    let startDate, endDate;
-
-                    if (dateRange === 'custom' && customStartDate && customEndDate && validateDates(customStartDate, customEndDate)) {
-                        startDate = new Date(customStartDate + 'T00:00:00Z');
-                        endDate = new Date(customEndDate + 'T00:00:00Z');
-                    } else {
-                        endDate = new Date(history[history.length - 1].date + 'T00:00:00Z');
-                        if (dateRange === 'all') {
-                            startDate = new Date(history[0].date + 'T00:00:00Z');
-                        } else {
-                            const days = parseInt(dateRange);
-                            startDate = new Date(endDate);
-                            startDate.setDate(endDate.getDate() - days + 1);
-                        }
-                    }
-
-                    history = history.filter(entry => {
-                        const entryDate = new Date(entry.date + 'T00:00:00Z');
-                        return entryDate >= startDate && entryDate <= endDate;
-                    });
-
-                    if (history.length < 2) return { percentage: 0, isIncrease: true };
-
-                    const firstDaily = history[0].daily;
-                    const lastDaily = history[history.length - 1].daily;
-                    const percentage = ((lastDaily - firstDaily) / firstDaily * 100).toFixed(2);
-                    const isIncrease = lastDaily >= firstDaily;
-
-                    return { percentage: Math.abs(percentage), isIncrease };
-                };
-
-                const { percentage, isIncrease } = getPercentageChange();
+                const showPercentageChange = compareItems.length === 1 && dateRange !== 'all';
+                const percentageChange = showPercentageChange && dateLabels.length > 0 
+                    ? calculateOverallPercentageChange(historyData[compareItems[0]] || [], dateLabels) 
+                    : null;
+                const changeColor = percentageChange && percentageChange !== 'N/A (First day was 0)' && percentageChange !== '0.00' 
+                    ? parseFloat(percentageChange) >= 0 ? 'text-green-500' : 'text-red-500'
+                    : 'text-white';
 
                 return (
                     <div className="modal-overlay" onClick={onClose}>
@@ -567,73 +696,83 @@
                             </button>
                             <div className="mb-4">
                                 <h2 className="text-lg font-bold text-white sm:text-xl">
-                                    {title} {album ? `(${album})` : ''} • {getCurrentTotalStreams().toLocaleString()} Total Streams
+                                    Compare {isAlbum ? 'Albums' : 'Songs'}
                                 </h2>
-                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-2 gap-2">
+                                <div className="mt-2 relative">
+                                    <input
+                                        type="text"
+                                        placeholder={`Search ${isAlbum ? 'albums' : 'songs'} to compare...`}
+                                        className="w-full px-4 py-2 text-sm rounded-lg border border-white/20 bg-black text-white placeholder-white/40 focus:outline-none focus:border-white/40 mb-2"
+                                        value={searchCompare}
+                                        onChange={(e) => {
+                                            setSearchCompare(e.target.value);
+                                            setShowSuggestions(e.target.value.length > 0);
+                                        }}
+                                        onFocus={() => setShowSuggestions(searchCompare.length > 0)}
+                                        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                                    />
+                                    {showSuggestions && filteredItems.length > 0 && (
+                                        <div className="autocomplete-suggestions">
+                                            {filteredItems.map(item => {
+                                                const key = isAlbum ? item.title : (item.title.toLowerCase() === 'already rich' ? 'Already Rich' : `${item.title}|${item.album}`);
+                                                return (
+                                                    <div
+                                                        key={key}
+                                                        className="suggestion-item text-sm"
+                                                        onClick={() => handleItemSelect(key)}
+                                                    >
+                                                        {isAlbum ? item.title : `${item.title} (${item.album})`}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                        {compareItems.map(key => (
+                                            <div
+                                                key={key}
+                                                className="flex items-center px-3 py-1 text-sm bg-white/20 text-white rounded-full"
+                                            >
+                                                {isAlbum ? key : (() => {
+                                                    const [title, album] = key.split('|');
+                                                    return `${title} (${album})`;
+                                                })()}
+                                                <button
+                                                    className="ml-2 text-white/60 hover:text-white"
+                                                    onClick={() => handleItemRemove(key)}
+                                                >
+                                                    ×
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {compareItems.length >= 5 && (
+                                        <p className="text-sm text-yellow-500 mt-2">
+                                            Maximum 5 {isAlbum ? 'albums' : 'songs'} can be compared
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-4 gap-2">
                                     <div>
                                         <p className="text-sm text-white/60">{getDateRangeText()}</p>
-                                        {dateRange !== 'all' && (
-                                            <p className="text-sm mt-1">
-                                                <span className="text-white/60">Change: </span>
-                                                <span className={isIncrease ? 'text-green-500' : 'text-red-500'}>
-                                                    {isIncrease ? '+' : '-'}{percentage}%
-                                                </span>
-                                            </p>
-                                        )}
                                     </div>
                                     <div className="flex gap-2 flex-wrap">
-                                        <button
-                                            className={`px-3 py-1 text-sm rounded-full border ${dateRange === '7' ? 'bg-white/20 border-white/40' : 'border-white/20'} text-white hover:bg-white/10`}
-                                            onClick={() => {
-                                                setDateRange('7');
-                                                setShowCustomPicker(false);
-                                                setCustomStartDate('');
-                                                setCustomEndDate('');
-                                                setTempStartDate('');
-                                                setTempEndDate('');
-                                            }}
-                                        >
-                                            Last 7 days
-                                        </button>
-                                        <button
-                                            className={`px-3 py-1 text-sm rounded-full border ${dateRange === '28' ? 'bg-white/20 border-white/40' : 'border-white/20'} text-white hover:bg-white/10`}
-                                            onClick={() => {
-                                                setDateRange('28');
-                                                setShowCustomPicker(false);
-                                                setCustomStartDate('');
-                                                setCustomEndDate('');
-                                                setTempStartDate('');
-                                                setTempEndDate('');
-                                            }}
-                                        >
-                                            Last 28 days
-                                        </button>
-                                        <button
-                                            className={`px-3 py-1 text-sm rounded-full border ${dateRange === '90' ? 'bg-white/20 border-white/40' : 'border-white/20'} text-white hover:bg-white/10`}
-                                            onClick={() => {
-                                                setDateRange('90');
-                                                setShowCustomPicker(false);
-                                                setCustomStartDate('');
-                                                setCustomEndDate('');
-                                                setTempStartDate('');
-                                                setTempEndDate('');
-                                            }}
-                                        >
-                                            Last 90 days
-                                        </button>
-                                        <button
-                                            className={`px-3 py-1 text-sm rounded-full border ${dateRange === 'all' ? 'bg-white/20 border-white/40' : 'border-white/20'} text-white hover:bg-white/10`}
-                                            onClick={() => {
-                                                setDateRange('all');
-                                                setShowCustomPicker(false);
-                                                setCustomStartDate('');
-                                                setCustomEndDate('');
-                                                setTempStartDate('');
-                                                setTempEndDate('');
-                                            }}
-                                        >
-                                            All
-                                        </button>
+                                        {['7', '28', '90', 'all'].map(range => (
+                                            <button
+                                                key={range}
+                                                className={`px-3 py-1 text-sm rounded-full border ${dateRange === range ? 'bg-white/20 border-white/40' : 'border-white/20'} text-white hover:bg-white/10`}
+                                                onClick={() => {
+                                                    setDateRange(range);
+                                                    setShowCustomPicker(false);
+                                                    setCustomStartDate('');
+                                                    setCustomEndDate('');
+                                                    setTempStartDate('');
+                                                    setTempEndDate('');
+                                                }}
+                                            >
+                                                {range === 'all' ? 'All' : `Last ${range} days`}
+                                            </button>
+                                        ))}
                                         <button
                                             className={`px-3 py-1 text-sm rounded-full border ${dateRange === 'custom' ? 'bg-white/20 border-white/40' : 'border-white/20'} text-white hover:bg-white/10`}
                                             onClick={() => {
@@ -656,8 +795,6 @@
                                                 className="mt-1 px-3 py-1 text-sm rounded-lg border border-white/20 bg-black text-white focus:outline-none focus:border-white/40 w-full"
                                                 value={tempStartDate}
                                                 onChange={(e) => setTempStartDate(e.target.value)}
-                                                min={historyData[historyKey] ? historyData[historyKey][0].date : ''}
-                                                max={tempEndDate || (historyData[historyKey] ? historyData[historyKey][historyData[historyKey].length - 1].date : '')}
                                             />
                                         </div>
                                         <div className="flex flex-col w-full sm:w-auto">
@@ -667,8 +804,6 @@
                                                 className="mt-1 px-3 py-1 text-sm rounded-lg border border-white/20 bg-black text-white focus:outline-none focus:border-white/40 w-full"
                                                 value={tempEndDate}
                                                 onChange={(e) => setTempEndDate(e.target.value)}
-                                                min={tempStartDate || (historyData[historyKey] ? historyData[historyKey][0].date : '')}
-                                                max={historyData[historyKey] ? historyData[historyKey][historyData[historyKey].length - 1].date : ''}
                                             />
                                         </div>
                                         <button
@@ -686,8 +821,13 @@
                                 )}
                             </div>
                             {!chartError && (
-                                <div className="chart-container h-[40vh] sm:h-[45vh]">
+                                <div className="chart-container">
                                     <canvas ref={canvasRef}></canvas>
+                                    {showPercentageChange && percentageChange !== null && (
+                                        <div className={`percentage-change ${changeColor}`}>
+                                            Change: {percentageChange}%
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -718,13 +858,11 @@
                     if (sortConfig.key === 'title' || sortConfig.key === 'album') {
                         const aValue = a[sortConfig.key] || '';
                         const bValue = b[sortConfig.key] || '';
-                        
                         if (sortConfig.direction === 'asc') {
                             return aValue.localeCompare(bValue);
                         }
                         return bValue.localeCompare(aValue);
                     }
-                    
                     if (sortConfig.direction === 'asc') {
                         return a[sortConfig.key] - b[sortConfig.key];
                     }
@@ -747,6 +885,13 @@
                     return sortConfig.direction === 'asc' ? ' ↑' : ' ↓';
                 }
                 return '';
+            };
+
+            const handleItemClick = (item) => {
+                const key = activeTab === 'songs' 
+                    ? (item.title.toLowerCase() === 'already rich' ? 'Already Rich' : `${item.title}|${item.album}`)
+                    : item.title;
+                setSelectedItems(prev => prev.includes(key) ? prev : [...prev, key]);
             };
 
             return (
@@ -805,7 +950,7 @@
                                             }`}
                                             onClick={() => {
                                                 setActiveTab('songs');
-                                                setSelectedSong(null);
+                                                setSelectedItems([]);
                                             }}
                                         >
                                             Songs
@@ -818,7 +963,7 @@
                                             }`}
                                             onClick={() => {
                                                 setActiveTab('albums');
-                                                setSelectedSong(null);
+                                                setSelectedItems([]);
                                             }}
                                         >
                                             Albums
@@ -874,13 +1019,8 @@
                                             {filteredData[activeTab].map((item, index) => (
                                                 <tr 
                                                     key={item.title + index} 
-                                                    className={`${index % 2 === 0 ? 'bg-black' : 'bg-white/5'} ${activeTab === 'songs' ? 'cursor-pointer hover:bg-white/10' : ''}`}
-                                                    onClick={() => {
-                                                        if (activeTab === 'songs') {
-                                                            const key = item.title.toLowerCase() === 'already rich' ? 'Already Rich' : `${item.title}|${item.album}`;
-                                                            setSelectedSong(key);
-                                                        }
-                                                    }}
+                                                    className={`${index % 2 === 0 ? 'bg-black' : 'bg-white/5'} cursor-pointer hover:bg-white/10`}
+                                                    onClick={() => handleItemClick(item)}
                                                 >
                                                     <td className="px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/60">{index + 1}</td>
                                                     <td className="px-2 sm:px-4 py-2 text-xs sm:text-sm text-white">{item.title}</td>
@@ -898,10 +1038,13 @@
                                     </table>
                                 </div>
 
-                                {activeTab === 'songs' && selectedSong && historyData[selectedSong] && (
-                                    <SongChart 
-                                        songTitle={selectedSong} 
-                                        onClose={() => setSelectedSong(null)}
+                                {selectedItems.length > 0 && (
+                                    <ComparisonChart 
+                                        itemKeys={selectedItems} 
+                                        itemsData={activeTab === 'songs' ? songs : albums}
+                                        historyData={activeTab === 'songs' ? historyData : albumHistoryData}
+                                        isAlbum={activeTab === 'albums'}
+                                        onClose={() => setSelectedItems([])}
                                     />
                                 )}
                             </>
@@ -916,7 +1059,7 @@
                 const root = ReactDOM.createRoot(document.getElementById('root'));
                 root.render(<YeatStats />);
             } else {
-                console.error('ReactDOM or React is not loaded. Please check the script tags.');
+                console.error('ReactDOM or React is not loaded.');
             }
         };
     </script>
