@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -549,7 +548,7 @@
                                                 const entry = historyData.find(e => e.date === date);
                                                 return [
                                                     `Daily: ${context.parsed.y?.toLocaleString() || 'N/A'}`,
-                                                    `Total: ${entry?.streams?.toLocaleString() || 'N/A'}`
+                    
                                                 ];
                                             },
                                             labelColor: () => ({
@@ -601,6 +600,14 @@
 
                     return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}`;
                 };
+
+                const showPercentageChange = dateRange !== 'all';
+                const percentageChange = showPercentageChange && dateLabels.length > 0 
+                    ? calculateOverallPercentageChange(historyData, dateLabels) 
+                    : null;
+                const changeColor = percentageChange && percentageChange !== 'N/A (First day was 0)' && percentageChange !== '0.00' 
+                    ? parseFloat(percentageChange) >= 0 ? 'text-green-500' : 'text-red-500'
+                    : 'text-white';
 
                 return (
                     <div className="modal-overlay" onClick={onClose}>
@@ -683,6 +690,11 @@
                             {!chartError && (
                                 <div className="chart-container">
                                     <canvas ref={canvasRef}></canvas>
+                                    {showPercentageChange && percentageChange !== null && (
+                                        <div className={`percentage-change ${changeColor}`}>
+                                            Change: {percentageChange}%
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -1209,7 +1221,7 @@
                     if (sortConfig.direction === 'asc') {
                         return a[sortConfig.key] - b[sortConfig.key];
                     }
-                    return b[sortConfig.key] - b[sortConfig.key];
+                    return b[sortConfig.key] - a[sortConfig.key];
                 });
             };
 
@@ -1414,4 +1426,3 @@
     </script>
 </body>
 </html>
-```
