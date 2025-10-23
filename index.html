@@ -126,16 +126,16 @@
             });
 
             const [albums, setAlbums] = React.useState([
-                { title: "Up 2 Më", streams: 0, daily: 0, tracks: 0 },
-                { title: "Lyfë", streams: 0, daily: 0, tracks: 0 },
-                { title: "2 Alivë", streams: 0, daily: 0, tracks: 0 },
-                { title: "2093", streams: 0, daily: 0, tracks: 0 },
-                { title: "AftërLyfe", streams: 0, daily: 0, tracks: 0 },
-                { title: "4L", streams: 0, daily: 0, tracks: 0 },
-                { title: "Trëndi", streams: 0, daily: 0, tracks: 0 },
-                { title: "Alivë", streams: 0, daily: 0, tracks: 0 },
-                { title: "LYFESTYLE", streams: 0, daily: 0, tracks: 0 },
-                { title: "DANGEROUS SUMMER", streams: 0, daily: 0, tracks: 0 }
+                { title: "Up 2 Më", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "Lyfë", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "2 Alivë", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "2093", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "AftërLyfe", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "4L", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "Trëndi", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "Alivë", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "LYFESTYLE", streams: 0, daily: 0, tracks: 0, growth: null },
+                { title: "DANGEROUS SUMMER", streams: 0, daily: 0, tracks: 0, growth: null }
             ]);
 
             React.useEffect(() => {
@@ -271,7 +271,7 @@
                     console.log(`Processed ${fileCount} CSV files. Dates: ${processedDates.sort().join(', ')}`);
 
                     const latestText = await latestResponse.text();
-                    processCSVData(latestText);
+                    processCSVData(latestText, history, albumHistory);
                     setHistoryData(history);
                     setAlbumHistoryData(albumHistory);
                     setTotalHistoryData(rawTotalHistory.sort((a, b) => new Date(a.date) - new Date(b.date)));
@@ -284,7 +284,7 @@
                 }
             };
 
-            const processCSVData = (csvText) => {
+            const processCSVData = (csvText, historyData, albumHistoryData) => {
                 Papa.parse(csvText, {
                     header: true,
                     skipEmptyLines: true,
@@ -307,7 +307,8 @@
                                         title: title.toLowerCase() === 'already rich' ? 'Already Rich' : title,
                                         album: album,
                                         streams: 0,
-                                        daily: 0
+                                        daily: 0,
+                                        growth: null
                                     };
                                 }
                                 songMap[key].streams += parseInt((row['Spotify total'] || '0').replace(/,/g, '')) || 0;
@@ -316,8 +317,16 @@
                         });
 
                         const processedSongs = Object.values(songMap).filter(song => song.streams || song.daily);
+                        
+                        // Calculate growth rates for songs
+                        processedSongs.forEach(song => {
+                            const key = song.title.toLowerCase() === 'already rich' ? 'Already Rich' : `${song.title}|${song.album}`;
+                            const history = historyData[key] || [];
+                            song.growth = calculateGrowthRate(history);
+                        });
+                        
                         setSongs(processedSongs);
-                        calculateStats(processedSongs);
+                        calculateStats(processedSongs, albumHistoryData);
                     },
                     error: (error) => {
                         setError('Error parsing CSV: ' + error.message);
@@ -325,7 +334,7 @@
                 });
             };
 
-            const calculateStats = (processedSongs) => {
+            const calculateStats = (processedSongs, albumHistoryData) => {
                 const totalStreams = processedSongs.reduce((sum, song) => sum + song.streams, 0);
                 const totalDaily = processedSongs.reduce((sum, song) => sum + song.daily, 0);
                 const totalTracks = processedSongs.length;
@@ -356,14 +365,48 @@
 
                 const albumStats = albums.map(album => {
                     const albumSongs = processedSongs.filter(song => song.album === album.title);
+                    const history = albumHistoryData[album.title] || [];
                     return {
                         title: album.title,
                         streams: albumSongs.reduce((sum, song) => sum + song.streams, 0),
                         daily: albumSongs.reduce((sum, song) => sum + song.daily, 0),
-                        tracks: albumSongs.length
+                        tracks: albumSongs.length,
+                        growth: calculateGrowthRate(history)
                     };
                 });
                 setAlbums(albumStats);
+            };
+
+            const calculateGrowthRate = (history) => {
+                if (!history || history.length < 2) return null;
+                
+                const sortedHistory = [...history].sort((a, b) => new Date(a.date) - new Date(b.date));
+                const latestEntry = sortedHistory[sortedHistory.length - 1];
+                const latestDate = new Date(latestEntry.date);
+                
+                // Find entry from 28 days ago
+                const targetDate = new Date(latestDate);
+                targetDate.setDate(targetDate.getDate() - 28);
+                
+                // Find the closest entry to 28 days ago
+                let oldEntry = null;
+                for (let i = sortedHistory.length - 1; i >= 0; i--) {
+                    const entryDate = new Date(sortedHistory[i].date);
+                    if (entryDate <= targetDate) {
+                        oldEntry = sortedHistory[i];
+                        break;
+                    }
+                }
+                
+                if (!oldEntry) return null;
+                
+                const oldDaily = oldEntry.daily || 0;
+                const newDaily = latestEntry.daily || 0;
+                
+                if (oldDaily === 0 && newDaily === 0) return 0;
+                if (oldDaily === 0) return null;
+                
+                return ((newDaily - oldDaily) / oldDaily) * 100;
             };
 
             const TotalChart = ({ historyData, onClose }) => {
@@ -548,7 +591,7 @@
                                                 const entry = historyData.find(e => e.date === date);
                                                 return [
                                                     `Daily: ${context.parsed.y?.toLocaleString() || 'N/A'}`,
-                    
+    
                                                 ];
                                             },
                                             labelColor: () => ({
@@ -1192,6 +1235,19 @@
 
             const formatNumber = (num) => num.toLocaleString('en-US');
 
+            const formatGrowth = (growth) => {
+                if (growth === null || growth === undefined) return 'N/A';
+                const formatted = growth.toFixed(1);
+                return growth >= 0 ? `+${formatted}%` : `${formatted}%`;
+            };
+
+            const getGrowthColor = (growth) => {
+                if (growth === null || growth === undefined) return 'text-white/60';
+                if (growth > 0) return 'text-green-500';
+                if (growth < 0) return 'text-red-500';
+                return 'text-white/60';
+            };
+
             const formatDate = (dateStr) => {
                 if (!dateStr) return '';
                 const [year, month, day] = dateStr.split('-');
@@ -1217,6 +1273,14 @@
                             return aValue.localeCompare(bValue);
                         }
                         return bValue.localeCompare(aValue);
+                    }
+                    if (sortConfig.key === 'growth') {
+                        const aValue = a[sortConfig.key] === null || a[sortConfig.key] === undefined ? -Infinity : a[sortConfig.key];
+                        const bValue = b[sortConfig.key] === null || b[sortConfig.key] === undefined ? -Infinity : b[sortConfig.key];
+                        if (sortConfig.direction === 'asc') {
+                            return aValue - bValue;
+                        }
+                        return bValue - aValue;
                     }
                     if (sortConfig.direction === 'asc') {
                         return a[sortConfig.key] - b[sortConfig.key];
@@ -1368,6 +1432,12 @@
                                                 >
                                                     Daily{getSortIndicator('daily')}
                                                 </th>
+                                                <th 
+                                                    className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm cursor-pointer hover:text-white text-white/80"
+                                                    onClick={() => requestSort('growth')}
+                                                >
+                                                    28d Growth{getSortIndicator('growth')}
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -1387,6 +1457,9 @@
                                                     )}
                                                     <td className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">{formatNumber(item.streams)}</td>
                                                     <td className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">{formatNumber(item.daily)}</td>
+                                                    <td className={`text-right px-2 sm:px-4 py-2 text-xs sm:text-sm ${getGrowthColor(item.growth)}`}>
+                                                        {formatGrowth(item.growth)}
+                                                    </td>
                                                 </tr>
                                             ))}
                                         </tbody>
