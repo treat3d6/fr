@@ -62,24 +62,20 @@
 
 <script type="text/babel">
 /**
- * Yeat Stats — GITHUB PAGES FIXED VERSION
- * Key fixes:
- * 1. EMBEDDED CSV DATA - No more fetch() issues
- * 2. Base64 encoded CSVs in script tags
- * 3. Automatic date detection
- * 4. Works 100% on GitHub Pages
+ * Yeat Stats — GITHUB PAGES FIXED (WORKING)
+ * - Embedded base64 CSVs
+ * - No fetch() = Works on GitHub Pages
+ * - Fixed React.useState typo
  */
 
 const CSV_DATA = {
-  // ADD YOUR CSV FILES HERE - Format: 'YYYY-MM-DD': 'base64_encoded_csv_content'
-  // Generate base64 with: https://www.base64encode.org/
-  // Or use the converter script below
+  // PASTE YOUR BASE64 CSVs HERE
   // Example:
-  // '2025-10-22': 'H4sIAAAAAAAAA...',
-  // '2025-10-21': 'H4sIAAAAAAAAA...',
+  // '2025-10-22': 'U29uZyxBbGJ1bSxTcG90aWZ5IGRhaWx5LFNwb3RpZnkgdG90YWwKTmV3IFNvbmcsTmV3IEFsYnVtLDEyMzQ1Niw3ODkwMTIz',
+  // '2025-10-21': 'U29uZyxBbGJ1bSxTcG90aWZ5IGRhaWx5LFNwb3RpZnkgdG90YWwKTmV3IFNvbmcsTmV3IEFsYnVtLDEwMDAwMCw3Nzc3Nzc3',
 };
 
-/* ------------------ Base64 CSV Decoder ------------------ */
+/* ------------------ Base64 Decoder ------------------ */
 function decodeCSV(base64) {
   try {
     const binary = atob(base64);
@@ -87,10 +83,9 @@ function decodeCSV(base64) {
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
-    const text = new TextDecoder().decode(bytes);
-    return text;
+    return new TextDecoder().decode(bytes);
   } catch (e) {
-    console.error('Decode error:', e);
+    console.error('Base64 decode error:', e);
     return '';
   }
 }
@@ -98,8 +93,8 @@ function decodeCSV(base64) {
 /* ------------------ Utilities ------------------ */
 const formatNum = (n) => (n || 0).toLocaleString('en-US');
 const parseIntSafe = s => {
-  if (s === undefined || s === null) return 0;
-  const n = parseInt((''+s).replace(/,/g,'').replace(/\s/g,''),10);
+  if (!s) return 0;
+  const n = parseInt((''+s).replace(/,/g,'').trim(), 10);
   return isNaN(n) ? 0 : n;
 };
 const dateToStr = d => d.toISOString().split('T')[0];
@@ -108,14 +103,15 @@ const strToDate = s => new Date(s + 'T00:00:00Z');
 /* ------------------ CSV Parser ------------------ */
 function parseCSV(text) {
   try {
-    const parsed = Papa.parse(text, { 
+    const result = Papa.parse(text, { 
       header: true, 
-      skipEmptyLines: true, 
+      skipEmptyLines: true,
+      dynamicTyping: false,
       transformHeader: h => h.trim().toLowerCase()
     });
-    return parsed.data || [];
+    return result.data || [];
   } catch (e) {
-    console.error('CSV parse error', e);
+    console.error('Parse error:', e);
     return [];
   }
 }
@@ -129,52 +125,44 @@ function App() {
   const [songs, setSongs] = React.useState([]);
   const [albums, setAlbums] = React.useState([]);
   const [history, setHistory] = React.useState({});
-  const [totalHistory, setTotalHistory] = React.useState([]);
   const [activeTab, setActiveTab] = React.useState('songs');
-  const [search, setSearch] = React.setState('');
+  const [search, setSearch] = React.useState('');  // FIXED: useState not setState
   const [sortConfig, setSortConfig] = React.useState({ key: 'streams', direction: 'desc' });
   const [chartModalOpen, setChartModalOpen] = React.useState(false);
   const [chartTargets, setChartTargets] = React.useState([]);
-  const chartJsRef = React.useRef(null);
+  const chartJsLoaded = React.useRef(false);
 
-  // Load data on mount
   React.useEffect(() => {
     (async () => {
       try {
-        setLoadingMessage('Processing data...');
-        
-        // Get available dates from CSV_DATA
-        const availableDates = Object.keys(CSV_DATA).sort().reverse();
-        if (!availableDates.length) {
-          throw new Error('No CSV data found. Add your CSVs to the CSV_DATA object.');
+        const dates = Object.keys(CSV_DATA).sort().reverse();
+        if (dates.length === 0) {
+          throw new Error('No CSV data found. Add base64 CSVs to CSV_DATA.');
         }
 
-        const todayStr = availableDates[0]; // Latest date
-        const d28 = new Date(strToDate(todayStr));
-        d28.setDate(d28.getDate() - 28);
-        const d28Str = dateToStr(d28);
-        
-        setLatestDate(todayStr);
-        
-        // Decode CSVs
-        const todayText = decodeCSV(CSV_DATA[todayStr]);
-        let oldText = '';
-        
-        // Find closest date to 28 days ago
-        const oldDate = availableDates.find(date => {
-          const diff = Math.abs(new Date(date) - d28);
-          return diff <= 28 * 24 * 60 * 60 * 1000; // Within 28 days
-        }) || availableDates[1] || todayStr;
-        
-        oldText = decodeCSV(CSV_DATA[oldDate]);
+        const latest = dates[0];
+        setLatestDate(latest);
+        setLoadingMessage('Decoding CSVs...');
 
-        // Parse CSVs
-        const todayRows = parseCSV(todayText);
+        // Decode latest
+        const latestText = decodeCSV(CSV_DATA[latest]);
+        if (!latestText) throw new Error('Failed to decode latest CSV.');
+
+        // Find 28-day-old CSV
+        const targetDate = new Date(strToDate(latest));
+        targetDate.setDate(targetDate.getDate() - 28);
+        const oldDateStr = dateToStr(targetDate);
+
+        const oldDate = dates.find(d => d <= oldDateStr) || dates[dates.length - 1];
+        const oldText = decodeCSV(CSV_DATA[oldDate]);
+
+        // Parse
+        const latestRows = parseCSV(latestText);
         const oldRows = parseCSV(oldText);
 
-        setLoadingMessage('Calculating stats...');
-        
-        // Build old map
+        setLoadingMessage('Calculating...');
+
+        // Build old total map
         const oldMap = {};
         oldRows.forEach(row => {
           const title = (row.song || '').trim();
@@ -184,9 +172,9 @@ function App() {
           oldMap[key] = parseIntSafe(row['spotify total']);
         });
 
-        // Build song data
+        // Build songs
         const songMap = {};
-        todayRows.forEach(row => {
+        latestRows.forEach(row => {
           const title = (row.song || '').trim();
           const album = (row.album || '').trim();
           if (!title) return;
@@ -194,48 +182,60 @@ function App() {
           const total = parseIntSafe(row['spotify total']);
           const daily = parseIntSafe(row['spotify daily']);
           const oldTotal = oldMap[key] || 0;
-          const growth = oldTotal > 0 ? ((total - oldTotal) / oldTotal) * 100 : 
-                        (oldTotal === 0 && total > 0 ? 999999 : 0);
+          const growth = oldTotal > 0 
+            ? ((total - oldTotal) / oldTotal) * 100 
+            : (oldTotal === 0 && total > 0 ? 999999 : 0);
           songMap[key] = { title, album, streams: total, daily, growth };
         });
 
         const songsArr = Object.values(songMap);
 
-        // Build album data
+        // Build albums
         const albumMap = {};
         songsArr.forEach(s => {
           const a = s.album || 'Unknown';
-          if (!albumMap[a]) {
-            albumMap[a] = { title: a, streams: 0, daily: 0, tracks: 0, growths: [] };
-          }
+          if (!albumMap[a]) albumMap[a] = { title: a, streams: 0, daily: 0, tracks: 0, growths: [] };
           albumMap[a].streams += s.streams;
           albumMap[a].daily += s.daily;
           albumMap[a].tracks += 1;
-          if (typeof s.growth === 'number' && isFinite(s.growth) && s.growth !== 999999) {
-            albumMap[a].growths.push(s.growth);
-          }
+          if (s.growth !== 999999 && isFinite(s.growth)) albumMap[a].growths.push(s.growth);
         });
 
-        const albumsArr = Object.keys(albumMap).map(k => {
-          const entry = albumMap[k];
-          const avgGrowth = entry.growths.length ? 
-            entry.growths.reduce((a,b)=>a+b,0)/entry.growths.length : 0;
-          return { 
-            title: entry.title, 
-            streams: entry.streams, 
-            daily: entry.daily, 
-            tracks: entry.tracks, 
-            growth: avgGrowth 
-          };
-        });
+        const albumsArr = Object.values(albumMap).map(a => ({
+          ...a,
+          growth: a.growths.length ? a.growths.reduce((x,y)=>x+y,0)/a.growths.length : 0
+        }));
 
         setSongs(songsArr);
         setAlbums(albumsArr);
+
+        // Build history
+        const hist = {};
+        const totalHist = [];
+        dates.forEach(date => {
+          const text = decodeCSV(CSV_DATA[date]);
+          const rows = parseCSV(text);
+          let dailySum = 0, totalSum = 0;
+          rows.forEach(row => {
+            const title = (row.song || '').trim();
+            const album = (row.album || '').trim();
+            if (!title) return;
+            const key = `${title}|${album}`;
+            const daily = parseIntSafe(row['spotify daily']);
+            const total = parseIntSafe(row['spotify total']);
+            if (!hist[key]) hist[key] = [];
+            hist[key].push({ date, streams: total, daily });
+            dailySum += daily;
+            totalSum += total;
+          });
+          totalHist.push({ date, streams: totalSum, daily: dailySum });
+        });
+
+        Object.keys(hist).forEach(k => hist[k].sort((a,b) => a.date.localeCompare(b.date)));
+        totalHist.sort((a,b) => a.date.localeCompare(b.date));
+
+        setHistory(hist);
         setLoading(false);
-
-        // Build history for charts
-        await buildHistory(availableDates);
-
       } catch (e) {
         console.error(e);
         setError(e.message);
@@ -244,117 +244,62 @@ function App() {
     })();
   }, []);
 
-  async function buildHistory(availableDates) {
-    const rawHistory = {};
-    const rawTotalHistory = [];
-
-    availableDates.forEach(dateStr => {
-      const text = decodeCSV(CSV_DATA[dateStr]);
-      const rows = parseCSV(text);
-      
-      let dailySum = 0;
-      let totalSum = 0;
-
-      rows.forEach(row => {
-        const title = (row.song || '').trim();
-        const album = (row.album || '').trim();
-        if (!title) return;
-        
-        const daily = parseIntSafe(row['spotify daily']);
-        const total = parseIntSafe(row['spotify total']);
-        const key = `${title}|${album}`;
-        
-        if (!rawHistory[key]) rawHistory[key] = [];
-        rawHistory[key].push({ date: dateStr, streams: total, daily });
-        
-        dailySum += daily;
-        totalSum += total;
-      });
-      
-      rawTotalHistory.push({ date: dateStr, streams: totalSum, daily: dailySum });
-    });
-
-    // Sort histories
-    Object.keys(rawHistory).forEach(k => {
-      rawHistory[k].sort((a,b) => new Date(a.date) - new Date(b.date));
-    });
-    rawTotalHistory.sort((a,b) => new Date(a.date) - new Date(b.date));
-
-    setHistory(rawHistory);
-    setTotalHistory(rawTotalHistory);
-  }
-
-  // Sorting
   const requestSort = (key) => {
-    setSortConfig(prev => {
-      let direction = 'desc';
-      if (prev.key === key && prev.direction === 'desc') direction = 'asc';
-      return { key, direction };
-    });
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+    }));
   };
 
   const applySort = (arr) => {
     const { key, direction } = sortConfig;
-    const clone = [...arr];
-    clone.sort((a,b) => {
+    return [...arr].sort((a, b) => {
       const va = a[key] ?? -Infinity;
       const vb = b[key] ?? -Infinity;
-      if (typeof va === 'string') {
-        return direction === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
-      }
+      if (typeof va === 'string') return direction === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
       return direction === 'asc' ? va - vb : vb - va;
     });
-    return clone;
   };
 
-  // Filtered data
   const displayedSongs = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
     let arr = songs;
-    if (q) arr = arr.filter(s => 
-      s.title.toLowerCase().includes(q) || s.album.toLowerCase().includes(q)
+    if (search) arr = arr.filter(s => 
+      s.title.toLowerCase().includes(search.toLowerCase()) || 
+      s.album.toLowerCase().includes(search.toLowerCase())
     );
     return applySort(arr);
   }, [songs, search, sortConfig]);
 
   const displayedAlbums = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
     let arr = albums;
-    if (q) arr = arr.filter(a => a.title.toLowerCase().includes(q));
+    if (search) arr = arr.filter(a => a.title.toLowerCase().includes(search.toLowerCase()));
     return applySort(arr);
   }, [albums, search, sortConfig]);
 
-  function growthDisplay(val) {
-    if (val === 999999) return 'new';
-    if (!isFinite(val)) return '0.00%';
-    return `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
-  }
-
-  const openChartModal = async (targets=[]) => {
+  const openChart = async () => {
+    const targets = activeTab === 'songs'
+      ? displayedSongs.slice(0, 3).map(s => `${s.title}|${s.album}`)
+      : displayedAlbums.slice(0, 3).map(a => `ALBUM::${a.title}`);
     setChartTargets(targets);
     setChartModalOpen(true);
-    
-    if (!chartJsRef.current) {
-      setLoadingMessage('Loading charts...');
+
+    if (!chartJsLoaded.current) {
       await new Promise((res, rej) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js';
-        s.onload = () => { res(); chartJsRef.current = true; };
-        s.onerror = rej;
-        document.head.appendChild(s);
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js';
+        script.onload = () => { chartJsLoaded.current = true; res(); };
+        script.onerror = rej;
+        document.head.appendChild(script);
       });
-      setLoadingMessage('');
     }
   };
 
   if (loading) {
     return (
-      <div className="max-w-6xl mx-auto p-4 sm:p-8">
-        <div className="card">
-          <div className="text-center py-8">
-            <div className="h-8 shimmer rounded w-2/5 mx-auto mb-4"></div>
-            <div className="muted">{loadingMessage}</div>
-          </div>
+      <div className="max-w-6xl mx-auto">
+        <div className="card text-center py-12">
+          <div className="h-8 shimmer rounded w-64 mx-auto mb-4"></div>
+          <p className="muted">{loadingMessage}</p>
         </div>
       </div>
     );
@@ -362,186 +307,153 @@ function App() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-semibold">Yeat Spotify Stats</h1>
-          <div className="mt-1 small muted">Latest: {latestDate}</div>
+          <p className="small muted">Latest: {latestDate}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <input 
-            placeholder="Search..." 
-            className="px-3 py-2 rounded-lg bg-black border border-white/10 small" 
-            value={search} 
-            onChange={(e)=>setSearch(e.target.value)} 
-          />
-        </div>
+        <input
+          placeholder="Search..."
+          className="px-3 py-2 rounded bg-black border border-white/10 small"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
       </div>
 
-      {error && <div className="card mb-4 text-red-400">Error: {error}</div>}
+      {error && <div className="card text-red-400 mb-4">Error: {error}</div>}
 
       <div className="card mb-4">
         <div className="flex gap-2">
-          <button 
-            className={`pill ${activeTab==='songs' ? 'bg-white text-black' : 'border border-white/10'}`} 
-            onClick={() => setActiveTab('songs')}
-          >
+          <button className={`pill ${activeTab==='songs'?'bg-white text-black':'border border-white/10'}`} onClick={()=>setActiveTab('songs')}>
             Songs ({songs.length})
           </button>
-          <button 
-            className={`pill ${activeTab==='albums' ? 'bg-white text-black' : 'border border-white/10'}`} 
-            onClick={() => setActiveTab('albums')}
-          >
+          <button className={`pill ${activeTab==='albums'?'bg-white text-black':'border border-white/10'}`} onClick={()=>setActiveTab('albums')}>
             Albums ({albums.length})
           </button>
         </div>
       </div>
 
       <div className="card table-scroll">
-        <table className="min-w-full small">
+        <table className="w-full small">
           <thead className="text-white/70">
             <tr>
               <th className="text-left py-2 w-8">#</th>
               <th className="text-left py-2 sortable" onClick={()=>requestSort('title')}>
-                {activeTab==='songs' ? 'Song' : 'Album'} {sortConfig.key==='title' ? (sortConfig.direction==='asc'?'↑':'↓') : ''}
+                {activeTab==='songs'?'Song':'Album'}
+                {sortConfig.key==='title' ? (sortConfig.direction==='asc'?' Up':' Down') : ''}
               </th>
               {activeTab==='songs' && <th className="text-left py-2">Album</th>}
               {activeTab==='albums' && <th className="text-right py-2">Tracks</th>}
-              <th className="text-right py-2 sortable" onClick={()=>requestSort('streams')}>
-                Streams {sortConfig.key==='streams' ? (sortConfig.direction==='asc'?'↑':'↓') : ''}
-              </th>
-              <th className="text-right py-2 sortable" onClick={()=>requestSort('daily')}>
-                Daily {sortConfig.key==='daily' ? (sortConfig.direction==='asc'?'↑':'↓') : ''}
-              </th>
-              <th className="text-right py-2 sortable" onClick={()=>requestSort('growth')}>
-                28d Growth {sortConfig.key==='growth' ? (sortConfig.direction==='asc'?'↑':'↓') : ''}
-              </th>
+              <th className="text-right py-2 sortable" onClick={()=>requestSort('streams')}>Streams</th>
+              <th className="text-right py-2 sortable" onClick={()=>requestSort('daily')}>Daily</th>
+              <th className="text-right py-2 sortable" onClick={()=>requestSort('growth')}>28d Growth</th>
             </tr>
           </thead>
           <tbody>
-            {(activeTab === 'songs' ? displayedSongs : displayedAlbums).map((item, idx) => (
-              <tr key={idx} className="border-t border-white/5 hover-glow">
-                <td className="py-3 text-white/60">{idx+1}</td>
+            {(activeTab === 'songs' ? displayedSongs : displayedAlbums).map((item, i) => (
+              <tr key={i} className="border-t border-white/5 hover-glow">
+                <td className="py-3 text-white/60">{i+1}</td>
                 <td className="py-3">{item.title}</td>
                 {activeTab==='songs' && <td className="py-3 text-white/60 small">{item.album}</td>}
                 {activeTab==='albums' && <td className="py-3 text-right text-white/60 small">{item.tracks}</td>}
                 <td className="py-3 text-right">{formatNum(item.streams)}</td>
                 <td className="py-3 text-right">{formatNum(item.daily)}</td>
                 <td className={`py-3 text-right ${item.growth >= 0 ? 'positive' : 'negative'}`}>
-                  {growthDisplay(item.growth)}
+                  {item.growth === 999999 ? 'new' : `${item.growth >= 0 ? '+' : ''}${item.growth.toFixed(2)}%`}
                 </td>
               </tr>
             ))}
-            {((activeTab==='songs' ? displayedSongs : displayedAlbums).length === 0) && (
-              <tr><td colSpan="7" className="py-6 text-center muted">No results</td></tr>
-            )}
           </tbody>
         </table>
       </div>
 
-      <button 
-        className="pill border border-white/10 mt-4" 
-        onClick={() => openChartModal(
-          activeTab === 'songs' 
-            ? displayedSongs.slice(0,3).map(s => `${s.title}|${s.album}`)
-            : displayedAlbums.slice(0,3).map(a => `ALBUM::${a.title}`)
-        )}
-      >
+      <button className="pill border border-white/10 mt-4" onClick={openChart}>
         Compare Charts
       </button>
 
       {chartModalOpen && (
-        <ChartModal
-          onClose={() => setChartModalOpen(false)}
-          targets={chartTargets}
-          history={history}
-          totalHistory={totalHistory}
-        />
+        <ChartModal onClose={() => setChartModalOpen(false)} targets={chartTargets} history={history} />
       )}
     </div>
   );
 }
 
-/* ------------------ ChartModal ------------------ */
-function ChartModal({ onClose, targets, history, totalHistory }) {
-  const canvasRef = React.useRef(null);
-  const chartRef = React.useRef(null);
-  const [dateRange] = React.useState('all');
+/* ------------------ Chart Modal ------------------ */
+function ChartModal({ onClose, targets, history }) {
+  const canvas = React.useRef(null);
+  const chart = React.useRef(null);
 
   React.useEffect(() => {
-    if (!window.Chart) return;
-    
-    const ctx = canvasRef.current?.getContext('2d');
-    if (!ctx || !targets.length) return;
+    if (!window.Chart || !targets.length) return;
 
-    const allDates = [...new Set(
-      targets.flatMap(t => 
-        t.startsWith('ALBUM::') 
-          ? Object.keys(history).filter(k => k.endsWith(`|${t.replace('ALBUM::','')}`)).flatMap(k => history[k]?.map(r => r.date) || [])
-          : history[t]?.map(r => r.date) || []
-      )
-    )].sort();
+    const allDates = new Set();
+    targets.forEach(t => {
+      if (t.startsWith('ALBUM::')) {
+        const album = t.slice(8);
+        Object.keys(history).filter(k => k.endsWith('|' + album)).forEach(k => 
+          history[k].forEach(r => allDates.add(r.date))
+        );
+      } else {
+        (history[t] || []).forEach(r => allDates.add(r.date));
+      }
+    });
+
+    const dates = Array.from(allDates).sort();
+    const colors = ['#60A5FA','#F87171','#34D399','#FBBF24','#A78BFA','#EC4899','#10B981'];
 
     const datasets = targets.map((t, i) => {
       let data = [];
       if (t.startsWith('ALBUM::')) {
-        const album = t.replace('ALBUM::', '');
-        const albumKeys = Object.keys(history).filter(k => k.endsWith(`|${album}`));
-        const albumData = {};
-        albumKeys.forEach(k => {
+        const album = t.slice(8);
+        const map = {};
+        Object.keys(history).filter(k => k.endsWith('|' + album)).forEach(k => {
           history[k].forEach(r => {
-            albumData[r.date] = (albumData[r.date] || 0) + r.daily;
+            map[r.date] = (map[r.date] || 0) + r.daily;
           });
         });
-        data = allDates.map(d => albumData[d] || 0);
+        data = dates.map(d => map[d] || 0);
       } else {
-        const songData = {};
-        history[t]?.forEach(r => songData[r.date] = r.daily);
-        data = allDates.map(d => songData[d] || 0);
+        const map = {};
+        (history[t] || []).forEach(r => map[r.date] = r.daily);
+        data = dates.map(d => map[d] || 0);
       }
-
-      const colors = ['#60A5FA','#F87171','#34D399','#FBBF24','#A78BFA','#EC4899','#10B981'];
-      
       return {
-        label: t.includes('|') ? t.split('|')[0] : t.replace('ALBUM::', ''),
+        label: t.includes('|') ? t.split('|')[0] : t.slice(8),
         data,
         borderColor: colors[i % colors.length],
         backgroundColor: colors[i % colors.length] + '33',
-        tension: 0.25,
+        tension: 0.3,
         fill: true
       };
     });
 
-    if (chartRef.current) chartRef.current.destroy();
-    chartRef.current = new Chart(ctx, {
+    const ctx = canvas.current.getContext('2d');
+    if (chart.current) chart.current.destroy();
+    chart.current = new Chart(ctx, {
       type: 'line',
-      data: { 
-        labels: allDates.map(d => new Date(d).toLocaleDateString('en-US', {month:'short', day:'numeric'})),
-        datasets 
-      },
+      data: { labels: dates.map(d => new Date(d).toLocaleDateString('en', {month:'short', day:'numeric'})), datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { labels: { color: '#fff' } } },
         scales: {
-          x: { ticks: { color: '#fff' }, grid: { color: 'rgba(255,255,255,0.04)' } },
-          y: { ticks: { color: '#fff' }, grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: true }
+          x: { ticks: { color: '#fff' }, grid: { color: '#3333' } },
+          y: { ticks: { color: '#fff' }, grid: { color: '#3333' }, beginAtZero: true }
         }
       }
     });
 
-    return () => chartRef.current?.destroy();
+    return () => chart.current?.destroy();
   }, [targets, history]);
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="card w-11/12 max-w-4xl max-h-[80vh] overflow-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg">Stream Comparison</h3>
+      <div className="card w-11/12 max-w-4xl h-96" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between mb-2">
+          <h3>Comparison</h3>
           <button className="pill border border-white/10" onClick={onClose}>Close</button>
         </div>
-        <div style={{height: '400px'}}>
-          <canvas ref={canvasRef}></canvas>
-        </div>
+        <canvas ref={canvas} className="w-full h-80"></canvas>
       </div>
     </div>
   );
