@@ -1,181 +1,673 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Yeat Stats - Fast Edition</title>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Yeat Stats — Fast & Fixed</title>
+
+  <!-- Core libs -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js" crossorigin></script>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
   <style>
+    :root {
+      --card-bg: rgba(255,255,255,0.03);
+      --muted: rgba(255,255,255,0.6);
+    }
+    html,body { height:100%; }
     body {
-      background: linear-gradient(to bottom, #000, #0a0a0a);
-      color: white;
-      font-family: 'Inter', sans-serif;
+      margin:0;
+      min-height:100%;
+      background: linear-gradient(180deg,#000000 0%, #0b0b0b 45%, #050505 100%);
+      color: #fff;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
     }
     .card {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 1rem;
-      padding: 1rem;
-      backdrop-filter: blur(8px);
+      background: var(--card-bg);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px;
+      padding: 14px;
+      backdrop-filter: blur(6px);
     }
-    .hover-glow:hover {
-      box-shadow: 0 0 12px rgba(255,255,255,0.1);
-      transition: 0.2s;
+    .muted { color: var(--muted); }
+    .pill { border-radius:999px; padding:6px 12px; }
+    .hover-glow:hover { box-shadow: 0 6px 20px rgba(255,255,255,0.03); transform: translateY(-2px); transition:0.18s; }
+    /* shimmer */
+    .shimmer {
+      background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 100%);
+      background-size: 200% 100%;
+      animation: shimmer 1.25s linear infinite;
+    }
+    @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+    .small { font-size: 13px; }
+    .table-scroll { max-height: 60vh; overflow:auto; }
+    .sortable { cursor:pointer; user-select:none; }
+    .positive { color: #34D399; } /* green-400 */
+    .negative { color: #FB7185; } /* red-400 */
+    /* responsive tweaks */
+    @media (max-width:640px) {
+      .desktop-only { display:none; }
+      .mobile-card { display:block; }
+    }
+    @media (min-width:641px) {
+      .mobile-card { display:none; }
     }
   </style>
 </head>
-<body class="p-4 sm:p-6">
-  <div id="root"></div>
+<body>
+  <div id="root" class="p-4 sm:p-8"></div>
 
-  <script type="text/babel">
-    const YeatStats = () => {
-      const [songs, setSongs] = React.useState([]);
-      const [albums, setAlbums] = React.useState([]);
-      const [loading, setLoading] = React.useState(true);
-      const [error, setError] = React.useState(null);
-      const [sortConfig, setSortConfig] = React.useState({ key: 'streams', direction: 'desc' });
-      const [activeTab, setActiveTab] = React.useState('songs');
-      const [searchTerm, setSearchTerm] = React.useState('');
+<script type="text/babel">
+/**
+ * Yeat Stats — Fast & Fixed
+ * Single-file app with:
+ * - quick initial load (latest + 28-day CSV)
+ * - background historical fetch (concurrency-limited)
+ * - localStorage caching
+ * - 28-day growth calculation
+ * - sorting & searching
+ * - lazy charts (load Chart.js only when user opens modal)
+ *
+ * IMPORTANT:
+ * - CSVs are expected at ./YYYY-MM-DD.csv relative to this file.
+ * - CSV headers expected: Song, Album, Spotify daily, Spotify total (case-insensitive)
+ */
 
-      React.useEffect(() => {
-        loadData();
-      }, []);
+/* ------------------ Config ------------------ */
+const CSV_BASE_PATH = './'; // adjust if CSVs are elsewhere
+const HISTORY_START_DATE = '2025-01-01'; // earliest date to try if you want full history
+const MAX_PARALLEL_FETCH = 8; // parallel concurrency for background fetch
+const CACHE_KEY = 'yeatstats_cache_v2'; // localStorage key
 
-      const loadData = async () => {
-        try {
-          const today = new Date();
-          const endDate = today.toISOString().split('T')[0];
-          const pastDate = new Date();
-          pastDate.setDate(today.getDate() - 28);
-          const startDate = pastDate.toISOString().split('T')[0];
+/* ------------------ Utilities ------------------ */
+const formatNum = (n) => (n || 0).toLocaleString('en-US');
+const parseIntSafe = s => {
+  if (s === undefined || s === null) return 0;
+  const n = parseInt((''+s).replace(/,/g,'').replace(/\s/g,''),10);
+  return isNaN(n) ? 0 : n;
+};
+const dateToStr = d => d.toISOString().split('T')[0];
+const strToDate = s => new Date(s + 'T00:00:00Z');
 
-          const [todayCSV, oldCSV] = await Promise.all([
-            fetch(`./${endDate}.csv?t=${Date.now()}`),
-            fetch(`./${startDate}.csv?t=${Date.now()}`)
-          ]);
+/* simple concurrency-limited map */
+async function pMap(inputs, mapper, concurrency = 5) {
+  const results = [];
+  const executing = [];
+  for (const item of inputs) {
+    const p = Promise.resolve().then(() => mapper(item));
+    results.push(p);
+    executing.push(p);
+    if (executing.length >= concurrency) {
+      await Promise.race(executing).catch(()=>{ /* swallow individual errors here */ });
+      // remove resolved from executing
+      for (let i = executing.length - 1; i >= 0; i--) {
+        if (executing[i].isResolved) executing.splice(i,1);
+      }
+    }
+    // mark completion status by patching promise (works in modern browsers)
+    p.then(()=>{ p.isResolved = true }, ()=>{ p.isResolved = true });
+  }
+  return Promise.all(results.map(p => p.catch(e => ({__error: e}))));
+}
 
-          const todayText = await todayCSV.text();
-          const oldText = await oldCSV.text();
+/* ------------------ Fetch helpers ------------------ */
+async function fetchCSVText(path) {
+  try {
+    const res = await fetch(path, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
+  } catch (e) {
+    throw e;
+  }
+}
 
-          const todayData = Papa.parse(todayText, { header: true }).data;
-          const oldData = Papa.parse(oldText, { header: true }).data;
+/* Parse CSV using PapaParse, return array of rows */
+function parseCSV(text) {
+  try {
+    const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, transformHeader: h => h.trim() });
+    return parsed.data || [];
+  } catch (e) {
+    console.error('CSV parse error', e);
+    return [];
+  }
+}
 
-          const oldMap = {};
-          oldData.forEach(r => {
-            const key = `${r.Song}|${r.Album}`;
-            oldMap[key] = parseInt((r['Spotify total'] || '0').replace(/,/g, '')) || 0;
-          });
+/* ------------------ App ------------------ */
+function App() {
+  const [loading, setLoading] = React.useState(true);
+  const [loadingMessage, setLoadingMessage] = React.useState('Initializing…');
+  const [error, setError] = React.useState(null);
+  const [latestDate, setLatestDate] = React.useState(null);
+  const [songs, setSongs] = React.useState([]); // {title, album, streams, daily, growth28}
+  const [albums, setAlbums] = React.useState([]); // {title, streams, daily, tracks, growth28}
+  const [history, setHistory] = React.useState({}); // songKey -> [{date, streams, daily}]
+  const [totalHistory, setTotalHistory] = React.useState([]); // [{date, streams, daily}]
+  const [activeTab, setActiveTab] = React.useState('songs');
+  const [search, setSearch] = React.useState('');
+  const [sortConfig, setSortConfig] = React.useState({ key: 'streams', direction: 'desc' });
+  const [chartModalOpen, setChartModalOpen] = React.useState(false);
+  const [chartTargets, setChartTargets] = React.useState([]); // keys for comparison modal
+  const chartJsRef = React.useRef(null);
 
-          const songMap = {};
-          todayData.forEach(r => {
-            const title = r.Song;
-            const album = r.Album;
-            const total = parseInt((r['Spotify total'] || '0').replace(/,/g, '')) || 0;
-            const daily = parseInt((r['Spotify daily'] || '0').replace(/,/g, '')) || 0;
-            const oldTotal = oldMap[`${title}|${album}`] || 0;
-            const growth = oldTotal > 0 ? ((total - oldTotal) / oldTotal) * 100 : 0;
-            songMap[`${title}|${album}`] = { title, album, streams: total, daily, growth };
-          });
-
-          const processedSongs = Object.values(songMap);
-          const albumMap = {};
-          processedSongs.forEach(s => {
-            if (!albumMap[s.album]) albumMap[s.album] = { title: s.album, streams: 0, daily: 0, tracks: 0, growth: 0 };
-            albumMap[s.album].streams += s.streams;
-            albumMap[s.album].daily += s.daily;
-            albumMap[s.album].tracks += 1;
-          });
-          Object.keys(albumMap).forEach(k => {
-            const matchingOld = Object.values(songMap).filter(s => s.album === k);
-            const avgGrowth = matchingOld.length ? matchingOld.reduce((a,b)=>a+b.growth,0)/matchingOld.length : 0;
-            albumMap[k].growth = avgGrowth;
-          });
-
-          setSongs(processedSongs);
-          setAlbums(Object.values(albumMap));
-          setLoading(false);
-        } catch (err) {
-          console.error(err);
-          setError('Failed to load data.');
-          setLoading(false);
+  // load quick data on mount
+  React.useEffect(() => {
+    (async () => {
+      try {
+        setLoadingMessage('Checking cache…');
+        const cacheRaw = localStorage.getItem(CACHE_KEY);
+        let cache = null;
+        if (cacheRaw) {
+          try { cache = JSON.parse(cacheRaw); } catch(e){ cache = null; }
         }
-      };
 
-      const requestSort = (key) => {
-        let direction = 'desc';
-        if (sortConfig.key === key && sortConfig.direction === 'desc') direction = 'asc';
-        setSortConfig({ key, direction });
-      };
+        // determine 'today' file and 28-days-ago file
+        const today = new Date();
+        const todayStr = dateToStr(today);
+        const d28 = new Date(today);
+        d28.setDate(d28.getDate() - 28);
+        const d28Str = dateToStr(d28);
 
-      const sortedData = (data) => {
-        return [...data].sort((a, b) => {
-          if (sortConfig.direction === 'asc') return a[sortConfig.key] - b[sortConfig.key];
-          return b[sortConfig.key] - a[sortConfig.key];
+        setLoadingMessage('Loading latest snapshots (fast)…');
+
+        // If cache is present and cached.latestDate === todayStr, fast-parse it.
+        const needFetchToday = !cache || cache.latestDate !== todayStr;
+        const needFetchOld = !cache || cache.latest28Date !== d28Str;
+
+        const fetches = [];
+        if (needFetchToday) fetches.push(fetchCSVText(`${CSV_BASE_PATH}${todayStr}.csv?t=${Date.now()}`).then(text => ({ date: todayStr, text })).catch(e => ({ date: todayStr, error: e })));
+        else fetches.push(Promise.resolve({ date: todayStr, text: cache.todayText || '' }));
+
+        if (needFetchOld) fetches.push(fetchCSVText(`${CSV_BASE_PATH}${d28Str}.csv?t=${Date.now()}`).then(text => ({ date: d28Str, text })).catch(e => ({ date: d28Str, error: e })));
+        else fetches.push(Promise.resolve({ date: d28Str, text: cache.oldText || '' }));
+
+        const [todayRes, oldRes] = await Promise.all(fetches);
+
+        if (todayRes.error && !cache) {
+          throw new Error(`Unable to fetch today's CSV (${todayStr}): ${todayRes.error.message || todayRes.error}`);
+        }
+
+        // If we have text from fetch or cache, parse
+        const todayText = todayRes.text || (cache && cache.todayText) || '';
+        const oldText = oldRes.text || (cache && cache.oldText) || '';
+
+        // update cache (store the raw CSV text for quick reuse)
+        const newCache = {
+          latestDate: todayStr,
+          latest28Date: d28Str,
+          todayText,
+          oldText,
+          updatedAt: Date.now()
+        };
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify(newCache)); } catch(e){ /* ignore storage errors */ }
+
+        setLatestDate(todayStr);
+        // parse
+        const todayRows = parseCSV(todayText);
+        const oldRows = parseCSV(oldText);
+
+        setLoadingMessage('Processing quick stats…');
+        const oldMap = {};
+        oldRows.forEach(row => {
+          const title = (row.Song||'').trim();
+          const album = (row.Album||'').trim();
+          if (!title) return;
+          const key = `${title}|${album}`;
+          oldMap[key] = parseIntSafe(row['Spotify total'] || row['Spotify Total'] || row['spotify total']);
         });
-      };
 
-      const filteredSongs = sortedData(songs.filter(s => s.title.toLowerCase().includes(searchTerm.toLowerCase()) || s.album.toLowerCase().includes(searchTerm.toLowerCase())));
-      const filteredAlbums = sortedData(albums.filter(a => a.title.toLowerCase().includes(searchTerm.toLowerCase())));
+        const songMap = {}; // key -> {title, album, streams, daily, growth28}
+        todayRows.forEach(row => {
+          const title = (row.Song||'').trim();
+          const album = (row.Album||'').trim();
+          if (!title) return;
+          const key = `${title}|${album}`;
+          const total = parseIntSafe(row['Spotify total'] || row['Spotify Total'] || row['spotify total']);
+          const daily = parseIntSafe(row['Spotify daily'] || row['Spotify Daily'] || row['spotify daily']);
+          const oldTotal = oldMap[key] || 0;
+          const growth = oldTotal > 0 ? ((total - oldTotal) / oldTotal) * 100 : (oldTotal === 0 && total > 0 ? 999999 : 0); // special marker if old was 0
+          songMap[key] = { title, album, streams: total, daily, growth };
+        });
 
-      const data = activeTab === 'songs' ? filteredSongs : filteredAlbums;
+        const songsArr = Object.values(songMap);
 
-      return (
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-2xl font-bold mb-4">Yeat Spotify Stats</h1>
-          {loading && <p className="text-white/60">Loading data...</p>}
-          {error && <p className="text-red-400">{error}</p>}
+        // build album aggregates
+        const albumMap = {};
+        songsArr.forEach(s => {
+          const a = s.album || 'Unknown';
+          if (!albumMap[a]) albumMap[a] = { title: a, streams: 0, daily: 0, tracks: 0, growths: [] };
+          albumMap[a].streams += s.streams;
+          albumMap[a].daily += s.daily;
+          albumMap[a].tracks += 1;
+          if (typeof s.growth === 'number' && isFinite(s.growth) && s.growth !== 999999) albumMap[a].growths.push(s.growth);
+        });
+        const albumsArr = Object.keys(albumMap).map(k => {
+          const entry = albumMap[k];
+          const avgGrowth = entry.growths.length ? entry.growths.reduce((a,b)=>a+b,0)/entry.growths.length : 0;
+          return { title: entry.title, streams: entry.streams, daily: entry.daily, tracks: entry.tracks, growth: avgGrowth };
+        });
 
-          {!loading && (
-            <>
-              <div className="flex flex-col sm:flex-row justify-between mb-4 gap-3">
-                <div className="flex gap-2">
-                  <button className={`px-4 py-2 rounded-full text-sm font-medium ${activeTab==='songs'?'bg-white text-black':'border border-white/20 text-white hover:bg-white/10'}`} onClick={()=>setActiveTab('songs')}>Songs</button>
-                  <button className={`px-4 py-2 rounded-full text-sm font-medium ${activeTab==='albums'?'bg-white text-black':'border border-white/20 text-white hover:bg-white/10'}`} onClick={()=>setActiveTab('albums')}>Albums</button>
-                </div>
-                <input type="text" placeholder="Search..." className="px-4 py-2 text-sm rounded-lg border border-white/20 bg-black text-white placeholder-white/40" value={searchTerm} onChange={(e)=>setSearchTerm(e.target.value)} />
-              </div>
+        // set quick results
+        setSongs(songsArr);
+        setAlbums(albumsArr);
+        setLoading(false);
 
-              <div className="overflow-x-auto card">
-                <table className="min-w-full text-sm">
-                  <thead className="border-b border-white/10 text-white/70">
-                    <tr>
-                      <th className="text-left py-2">#</th>
-                      <th className="text-left py-2 cursor-pointer" onClick={()=>requestSort('title')}>{activeTab==='songs'?'Song':'Album'} Title</th>
-                      {activeTab==='songs' && <th className="text-left py-2">Album</th>}
-                      {activeTab==='albums' && <th className="text-right py-2">Tracks</th>}
-                      <th className="text-right py-2 cursor-pointer" onClick={()=>requestSort('streams')}>Streams</th>
-                      <th className="text-right py-2 cursor-pointer" onClick={()=>requestSort('daily')}>Daily</th>
-                      <th className="text-right py-2 cursor-pointer" onClick={()=>requestSort('growth')}>28d Growth %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.map((item, idx)=>(
-                      <tr key={idx} className="border-b border-white/5 hover-glow">
-                        <td className="py-2 text-white/60">{idx+1}</td>
-                        <td className="py-2">{item.title}</td>
-                        {activeTab==='songs' && <td className="py-2 text-white/60">{item.album}</td>}
-                        {activeTab==='albums' && <td className="text-right py-2 text-white/60">{item.tracks}</td>}
-                        <td className="text-right py-2">{item.streams.toLocaleString()}</td>
-                        <td className="text-right py-2">{item.daily.toLocaleString()}</td>
-                        <td className={`text-right py-2 ${item.growth>=0?'text-green-400':'text-red-400'}`}>{item.growth.toFixed(2)}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+        // Kick off background historical fetch for charts, but don't block UI.
+        backgroundFetchHistory(HISTORY_START_DATE, todayStr, newCache);
+
+      } catch (e) {
+        console.error(e);
+        setError(e.message || String(e));
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  /* Background: fetch historical CSVs but limited concurrency.
+     This will populate `history` and `totalHistory` progressively and is used by charts. */
+  async function backgroundFetchHistory(startDateStr, endDateStr, quickCache) {
+    try {
+      setLoadingMessage('Fetching history (background)...');
+
+      const start = strToDate(startDateStr);
+      const end = strToDate(endDateStr);
+
+      const dates = [];
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        dates.push(dateToStr(new Date(d)));
+      }
+
+      // if very many dates (since 2025-01-01), we can decide to skip very old dates — but we'll try all for completeness
+      // Use concurrency-limited fetch mapper
+      const results = await pMap(dates, async (dt) => {
+        try {
+          // Try to use quickCache for the two already fetched dates
+          if (quickCache && (dt === quickCache.latestDate || dt === quickCache.latest28Date)) {
+            const text = dt === quickCache.latestDate ? quickCache.todayText : quickCache.oldText;
+            return { date: dt, text };
+          }
+          const txt = await fetchCSVText(`${CSV_BASE_PATH}${dt}.csv?t=${Date.now()}`).catch(e => { throw e; });
+          return { date: dt, text: txt };
+        } catch (e) {
+          // mark missing/failed dates (404s, CORS, etc.)
+          return { date: dt, error: e };
+        }
+      }, MAX_PARALLEL_FETCH);
+
+      // Build history
+      const rawHistory = {}; // key -> [{date, streams, daily}]
+      const rawTotalHistory = []; // {date, streams, daily}
+
+      for (const r of results) {
+        if (r.__error) {
+          // mapper returned an error object (pMap wraps)
+          continue;
+        }
+        const dt = r.date;
+        if (!r.text) continue; // missing file
+        const rows = parseCSV(r.text);
+        let dailySum = 0;
+        let totalSum = 0;
+        rows.forEach(row => {
+          const title = (row.Song||'').trim();
+          const album = (row.Album||'').trim();
+          if (!title) return;
+          const daily = parseIntSafe(row['Spotify daily'] || row['Spotify Daily'] || row['spotify daily']);
+          const total = parseIntSafe(row['Spotify total'] || row['Spotify Total'] || row['spotify total']);
+          const key = `${title}|${album}`;
+          if (!rawHistory[key]) rawHistory[key] = [];
+          rawHistory[key].push({ date: dt, streams: total, daily });
+          dailySum += daily;
+          totalSum += total;
+        });
+        rawTotalHistory.push({ date: dt, streams: totalSum, daily: dailySum });
+      }
+
+      // sort each history by date ascending
+      Object.keys(rawHistory).forEach(k => rawHistory[k].sort((a,b)=> new Date(a.date)-new Date(b.date)));
+      rawTotalHistory.sort((a,b)=> new Date(a.date)-new Date(b.date));
+
+      // store in state
+      setHistory(rawHistory);
+      setTotalHistory(rawTotalHistory);
+
+      // Save to cache (so future loads can use it)
+      try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        const parsed = cached ? JSON.parse(cached) : {};
+        parsed.historyMeta = { updatedAt: Date.now(), earliest: dates[0], latest: dates[dates.length-1] };
+        localStorage.setItem(CACHE_KEY, JSON.stringify(parsed));
+      } catch(e){ /* ignore storage errors */ }
+
+      setLoadingMessage('');
+    } catch (e) {
+      console.warn('Background fetch failed', e);
+      // don't fail the UI
+    }
+  }
+
+  /* Sorting helper */
+  const requestSort = (key) => {
+    setSortConfig(prev => {
+      let direction = 'desc';
+      if (prev.key === key && prev.direction === 'desc') direction = 'asc';
+      return { key, direction };
+    });
+  };
+
+  const applySort = (arr) => {
+    const { key, direction } = sortConfig;
+    const clone = [...arr];
+    clone.sort((a,b) => {
+      const va = (a[key] === undefined || a[key] === null) ? -Infinity : a[key];
+      const vb = (b[key] === undefined || b[key] === null) ? -Infinity : b[key];
+      if (typeof va === 'string') return direction === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      return direction === 'asc' ? va - vb : vb - va;
+    });
+    return clone;
+  };
+
+  /* Filtered & sorted data */
+  const displayedSongs = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let arr = songs;
+    if (q) arr = arr.filter(s => s.title.toLowerCase().includes(q) || s.album.toLowerCase().includes(q));
+    return applySort(arr);
+  }, [songs, search, sortConfig]);
+
+  const displayedAlbums = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let arr = albums;
+    if (q) arr = arr.filter(a => a.title.toLowerCase().includes(q));
+    return applySort(arr);
+  }, [albums, search, sortConfig]);
+
+  /* Format growth: if marker 999999 means oldTotal==0 so infinite growth — display "—" or "new" */
+  function growthDisplay(val) {
+    if (val === 999999) return 'new';
+    if (!isFinite(val)) return '0.00%';
+    return `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
+  }
+
+  /* Open chart modal (lazy load Chart.js + module) */
+  const openChartModal = async (targets=[]) => {
+    setChartTargets(targets);
+    setChartModalOpen(true);
+    // load Chart.js if not loaded
+    if (!chartJsRef.current) {
+      try {
+        // load Chart.js from CDN
+        setLoadingMessage('Loading charts…');
+        await new Promise((res, rej) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js';
+          s.onload = () => res();
+          s.onerror = () => rej(new Error('Failed to load chart library'));
+          document.head.appendChild(s);
+        });
+      } catch (e) {
+        console.error('Chart load failed', e);
+      } finally {
+        setLoadingMessage('');
+        chartJsRef.current = true;
+      }
+    }
+  };
+
+  /* Render */
+  return (
+    <div className="max-w-6xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold">Yeat Spotify Stats</h1>
+          <div className="mt-1 small muted">Latest snapshot: {latestDate || '—'}</div>
         </div>
-      );
-    };
+        <div className="flex items-center gap-3">
+          <div className="muted small">{loadingMessage || (loading ? 'Loading data…' : '')}</div>
+          <button className="pill border border-white/10 px-3 py-1 text-sm" onClick={() => {
+            // force refresh: clear cache and reload
+            try { localStorage.removeItem(CACHE_KEY); } catch(e){}
+            location.reload();
+          }}>Hard refresh</button>
+        </div>
+      </div>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<YeatStats />);
-  </script>
+      <div className="card mb-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex gap-2">
+            <button className={`pill ${activeTab==='songs' ? 'bg-white text-black' : 'border border-white/10'}`} onClick={() => setActiveTab('songs')}>Songs</button>
+            <button className={`pill ${activeTab==='albums' ? 'bg-white text-black' : 'border border-white/10'}`} onClick={() => setActiveTab('albums')}>Albums</button>
+          </div>
+          <div className="flex gap-2 items-center">
+            <input placeholder="Search songs or albums..." className="px-3 py-2 rounded-lg bg-black border border-white/10 small" value={search} onChange={(e)=>setSearch(e.target.value)} />
+            <button className="pill border border-white/10 small" onClick={() => {
+              // open chart on first selected items as quick demo
+              if (activeTab === 'songs') openChartModal(displayedSongs.slice(0,3).map(s => `${s.title}|${s.album}`));
+              else openChartModal(displayedAlbums.slice(0,3).map(a => `ALBUM::${a.title}`));
+            }}>Compare</button>
+          </div>
+        </div>
+      </div>
+
+      {error && <div className="card mb-4 text-red-400">Error: {error}</div>}
+
+      {loading && !loadingMessage && (
+        <div className="card mb-4">
+          <div className="h-8 shimmer rounded w-2/5"></div>
+        </div>
+      )}
+
+      <div className="card table-scroll">
+        <table className="min-w-full small">
+          <thead className="text-white/70">
+            <tr>
+              <th className="text-left py-2 w-8">#</th>
+              <th className="text-left py-2 sortable" onClick={()=>requestSort('title')}>{activeTab==='songs' ? 'Song' : 'Album'} Title {sortConfig.key==='title' ? (sortConfig.direction==='asc'?'↑':'↓') : ''}</th>
+              {activeTab==='songs' && <th className="text-left py-2">Album</th>}
+              {activeTab==='albums' && <th className="text-right py-2">Tracks</th>}
+              <th className="text-right py-2 sortable" onClick={()=>requestSort('streams')}>Streams {sortConfig.key==='streams' ? (sortConfig.direction==='asc'?'↑':'↓') : ''}</th>
+              <th className="text-right py-2 sortable" onClick={()=>requestSort('daily')}>Daily {sortConfig.key==='daily' ? (sortConfig.direction==='asc'?'↑':'↓') : ''}</th>
+              <th className="text-right py-2 sortable" onClick={()=>requestSort(activeTab==='songs'?'growth':'growth')}>28d Growth {sortConfig.key==='growth' ? (sortConfig.direction==='asc'?'↑':'↓') : ''}</th>
+            </tr>
+          </thead>
+          <tbody>
+            { (activeTab === 'songs' ? displayedSongs : displayedAlbums).map((item, idx) => (
+              <tr key={(item.title||'') + idx} className="border-t border-white/5 hover-glow">
+                <td className="py-3 text-white/60">{idx+1}</td>
+                <td className="py-3">{item.title}</td>
+                {activeTab==='songs' && <td className="py-3 text-white/60 small">{item.album}</td>}
+                {activeTab==='albums' && <td className="py-3 text-right text-white/60 small">{item.tracks}</td>}
+                <td className="py-3 text-right">{formatNum(item.streams)}</td>
+                <td className="py-3 text-right">{formatNum(item.daily)}</td>
+                <td className={"py-3 text-right " + (item.growth === 999999 ? 'positive' : (item.growth >= 0 ? 'positive' : 'negative'))}>
+                  { item.growth === 999999 ? 'new' : `${item.growth >= 0 ? '+' : ''}${item.growth.toFixed(2)}%` }
+                </td>
+              </tr>
+            )) }
+            { ((activeTab==='songs' ? displayedSongs : displayedAlbums).length === 0) && (
+              <tr><td colSpan="7" className="py-6 text-center muted">No results</td></tr>
+            ) }
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-4 small muted">
+        Tip: click a column header to sort. Click <strong>Compare</strong> to open charts (loaded lazily).
+      </div>
+
+      {/* Chart modal (lazy, only mounts when open) */}
+      {chartModalOpen && (
+        <ChartModal
+          onClose={() => setChartModalOpen(false)}
+          targets={chartTargets}
+          history={history}
+          totalHistory={totalHistory}
+          songsMap={(songs||[]).reduce((m,s)=>{ m[`${s.title}|${s.album}`]=s; return m; },{})}
+          albumsMap={(albums||[]).reduce((m,a)=>{ m[`ALBUM::${a.title}`]=a; return m; },{})}
+        />
+      )}
+
+    </div>
+  );
+}
+
+/* ------------------ ChartModal component ------------------ */
+function ChartModal({ onClose, targets = [], history = {}, totalHistory = [], songsMap = {}, albumsMap = {} }) {
+  const canvasRef = React.useRef(null);
+  const chartRef = React.useRef(null);
+  const [dateRange, setDateRange] = React.useState('28'); // default focus last 28 days
+  const [error, setError] = React.useState(null);
+
+  React.useEffect(() => {
+    // Wait until Chart.js is loaded
+    if (!window.Chart) {
+      setError('Chart.js not loaded. Try closing and re-opening comparison.');
+      return;
+    }
+    renderChart();
+    return () => {
+      if (chartRef.current) chartRef.current.destroy();
+    };
+  }, [targets, dateRange, history]);
+
+  const buildSeries = () => {
+    // targets are keys like 'Song|Album' or 'ALBUM::AlbumName'
+    const allDatesSet = new Set();
+    const series = [];
+
+    targets.forEach((t, idx) => {
+      if (t.startsWith('ALBUM::')) {
+        const albumTitle = t.replace('ALBUM::','');
+        // find all song keys that belong to album
+        const keys = Object.keys(history).filter(k => k.endsWith('|' + albumTitle));
+        // merge totals per date
+        const perDate = {};
+        keys.forEach(k => {
+          history[k].forEach(row => {
+            perDate[row.date] = (perDate[row.date] || 0) + (row.daily || 0);
+            allDatesSet.add(row.date);
+          });
+        });
+        const dates = Array.from(allDatesSet).sort((a,b)=> new Date(a)-new Date(b));
+        const data = dates.map(d => perDate[d] || null);
+        series.push({ label: albumTitle + ' (album)', data, colorIdx: idx });
+      } else {
+        const hist = history[t] || [];
+        hist.forEach(r => allDatesSet.add(r.date));
+      }
+    });
+
+    // if we haven't built series for individual songs above, do it now
+    targets.forEach((t, idx) => {
+      if (!t.startsWith('ALBUM::')) {
+        const hist = history[t] || [];
+        hist.forEach(r => allDatesSet.add(r.date));
+      }
+    });
+
+    const sortedDates = Array.from(allDatesSet).sort((a,b)=> new Date(a)-new Date(b));
+    // create song series
+    targets.forEach((t, idx) => {
+      if (t.startsWith('ALBUM::')) return; // already handled
+      const hist = history[t] || [];
+      const map = {};
+      hist.forEach(r => map[r.date] = r.daily || 0);
+      const data = sortedDates.map(d => (d in map) ? map[d] : null);
+      const label = t.includes('|') ? t.split('|')[0] : t;
+      series.push({ label, data, colorIdx: idx });
+    });
+
+    return { dates: sortedDates, series };
+  };
+
+  const renderChart = () => {
+    try {
+      const { dates, series } = buildSeries();
+      if (!dates.length || !series.length) {
+        setError('No historical data available for selected items.');
+        return;
+      }
+      const labels = dates.map(d => {
+        const dt = new Date(d + 'T00:00:00Z');
+        return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      });
+
+      const colorPool = ['#60A5FA','#F87171','#34D399','#FBBF24','#A78BFA','#EC4899','#10B981'];
+
+      const datasets = series.map((s, i) => ({
+        label: s.label,
+        data: s.data,
+        borderColor: colorPool[i % colorPool.length],
+        backgroundColor: colorPool[i % colorPool.length] + '33',
+        tension: 0.25,
+        fill: true,
+        spanGaps: true,
+        pointRadius: 0,
+        borderWidth: 2
+      }));
+
+      const ctx = canvasRef.current.getContext('2d');
+      if (chartRef.current) chartRef.current.destroy();
+      chartRef.current = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#fff' } } },
+          scales: {
+            x: { ticks: { color: '#fff' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+            y: { ticks: { color: '#fff' }, grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: true }
+          }
+        }
+      });
+    } catch (e) {
+      console.error('Chart render error', e);
+      setError('Failed to render chart.');
+    }
+  };
+
+  return (
+    <div className="modal-overlay" style={{
+      position:'fixed', inset:0, display:'flex', justifyContent:'center', alignItems:'center', zIndex:1000, background:'rgba(0,0,0,0.7)'
+    }} onClick={onClose}>
+      <div onClick={(e)=>e.stopPropagation()} className="card" style={{ width:'92%', maxWidth:920, maxHeight:'86vh', overflow:'auto' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+          <h3 className="text-lg">Comparison</h3>
+          <div style={{ display:'flex', gap:8 }}>
+            <button className="pill border border-white/10" onClick={onClose}>Close</button>
+          </div>
+        </div>
+
+        <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+          <div className="small muted">Date range:</div>
+          {['7','28','90','all'].map(r => (
+            <button key={r} className={`pill ${dateRange===r ? 'bg-white text-black' : 'border border-white/10'}`} onClick={()=>setDateRange(r)}>{r==='all' ? 'All' : `Last ${r} days`}</button>
+          ))}
+        </div>
+
+        { error && <div className="text-red-400 small">{error}</div> }
+
+        <div style={{ height: 380 }}>
+          <canvas ref={canvasRef} style={{ width:'100%', height:'100%' }}></canvas>
+        </div>
+
+        <div className="mt-3 small muted">
+          Charts are generated from historical CSVs. If historical data is incomplete, charts may have gaps.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------ Render App ------------------ */
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+
+</script>
 </body>
 </html>
