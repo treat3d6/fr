@@ -1,308 +1,483 @@
-<script type="text/babel">
-/* ===== YEAT STATS — NOVEMBER-PROOF + GITHUB PAGES FIXED ===== */
-const REPO_USER = 'treat3d6';
-const REPO_NAME = 'fr';
-const BRANCH = 'main';  // or 'gh-pages'
-const RAW_BASE = `https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/${BRANCH}/`;
-const CACHE_KEY = 'yeatstats_nov2025_v2';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Yeat Stats</title>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <style>
+        @media (max-width: 640px) {
+            .table-container { -webkit-overflow-scrolling: touch; }
+            .modal-content { width: 95%; max-height: 85vh; padding: 1rem; }
+            .chart-container { height: 40vh !important; position: relative; }
+        }
+        @media (min-width: 641px) {
+            .chart-container { height: 45vh !important; position: relative; }
+        }
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.75); display: flex; justify-content: center;
+            align-items: center; z-index: 1000;
+        }
+        .modal-content {
+            background: black; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 0.5rem; width: 90%; max-width: 800px; max-height: 80vh;
+            overflow-y: auto; padding: 1.5rem; position: relative;
+        }
+        .close-button {
+            position: absolute; top: 0.5rem; right: 0.5rem;
+            background: none; border: none; color: white; font-size: 1.5rem;
+            cursor: pointer; padding: 0.5rem;
+        }
+        .autocomplete-suggestions {
+            position: absolute; background: black; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 0.5rem; max-height: 200px; overflow-y: auto;
+            width: calc(100% - 2rem); z-index: 1001;
+        }
+        .suggestion-item {
+            padding: 0.5rem 1rem; color: white; cursor: pointer;
+        }
+        .suggestion-item:hover { background: rgba(255,255,255,0.1); }
+        .percentage-change {
+            position: absolute; top: 0.5rem; right: 0.5rem;
+            font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 0.25rem;
+        }
+    </style>
+</head>
+<body class="bg-black">
+    <div id="root"></div>
 
-const formatNum = n => (n||0).toLocaleString();
-const toNum = s => parseInt((''+s).replace(/,/g,'').trim(),10)||0;
-const dateToStr = d => d.toISOString().split('T')[0];
-const strToDate = s => new Date(s + 'T00:00:00Z');
+    <script type="text/babel">
+        /* ===== YEAT STATS — FINAL FIX (NO WHITE SCREEN) ===== */
+        const REPO_USER = 'treat3d6';
+        const REPO_NAME = 'fr';
+        const BRANCH = 'main';
+        const RAW_BASE = `https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/${BRANCH}/`;
 
-/* === FIXED: Find closest CSV to 28 days ago (REAL DATE MATH) === */
-function find28DayOld(availableDates, todayStr) {
-  const target = new Date(todayStr);
-  target.setDate(target.getDate() - 28);
-  const targetTime = target.getTime();
+        const formatNum = n => (n||0).toLocaleString();
+        const toNum = s => parseInt((''+s).replace(/,/g,'').trim(),10)||0;
+        const dateToStr = d => d.toISOString().split('T')[0];
+        const strToDate = s => new Date(s + 'T00:00:00Z');
 
-  let best = null;
-  let bestDiff = Infinity;
+        function find28DayOld(availableDates, todayStr) {
+            const target = new Date(todayStr);
+            target.setDate(target.getDate() - 28);
+            const targetTime = target.getTime();
+            let best = null, bestDiff = Infinity;
+            for (const d of availableDates) {
+                const diff = Math.abs(strToDate(d) - targetTime);
+                if (diff < bestDiff) { bestDiff = diff; best = d; }
+            }
+            return best;
+        }
 
-  for (const d of availableDates) {
-    const diff = Math.abs(strToDate(d) - targetTime);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = d;
-    }
-  }
-  return best; // Always returns a real file
-}
+        const YeatStats = () => {
+            const [activeTab, setActiveTab] = React.useState('songs');
+            const [searchTerm, setSearchTerm] = React.useState('');
+            const [sortConfig, setSortConfig] = React.useState({ key: 'streams', direction: 'desc' });
+            const [songs, setSongs] = React.useState([]);
+            const [historyData, setHistoryData] = React.useState({});
+            const [albumHistoryData, setAlbumHistoryData] = React.useState({});
+            const [totalHistoryData, setTotalHistoryData] = React.useState([]);
+            const [loading, setLoading] = React.useState(true);
+            const [error, setError] = React.useState(null);
+            const [selectedItems, setSelectedItems] = React.useState([]);
+            const [showTotalChart, setShowTotalChart] = React.useState(false);
+            const [latestDate, setLatestDate] = React.useState(null);
+            const [statsData, setStatsData] = React.useState({
+                headers: ['Total', 'Lead', 'Solo', 'Features'],
+                rows: [
+                    { label: 'Streams', values: [0, 0, 0, 0] },
+                    { label: 'Daily', values: [0, 0, 0, 0] },
+                    { label: 'Tracks', values: [0, 0, 0, 0] }
+                ]
+            });
 
-/* === App Component === */
-function YeatStats() {
-  const [activeTab, setActiveTab] = React.useState('songs');
-  const [searchTerm, setSearchTerm] = React.useState('');
-  const [sortConfig, setSortConfig] = React.useState({ key: 'streams', direction: 'desc' });
-  const [songs, setSongs] = React.useState([]);
-  const [historyData, setHistoryData] = React.useState({});
-  const [albumHistoryData, setAlbumHistoryData] = React.useState({});
-  const [totalHistoryData, setTotalHistoryData] = React.useState([]);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState(null);
-  const [selectedItems, setSelectedItems] = React.useState([]);
-  const [showTotalChart, setShowTotalChart] = React.useState(false);
-  const [latestDate, setLatestDate] = React.useState(null);
-  const [statsData, setStatsData] = React.useState({
-    headers: ['Total', 'Lead', 'Solo', 'Features'],
-    rows: [
-      { label: 'Streams', values: [0, 0, 0, 0] },
-      { label: 'Daily', values: [0, 0, 0, 0] },
-      { label: 'Tracks', values: [0, 0, 0, 0] }
-    ]
-  });
+            const [albums, setAlbums] = React.useState([
+                { title: "Up 2 Më", streams: 0, daily: 0, tracks: 0 },
+                { title: "Lyfë", streams: 0, daily: 0, tracks: 0 },
+                { title: "2 Alivë", streams: 0, daily: 0, tracks: 0 },
+                { title: "2093", streams: 0, daily: 0, tracks: 0 },
+                { title: "AftërLyfe", streams: 0, daily: 0, tracks: 0 },
+                { title: "4L", streams: 0, daily: 0, tracks: 0 },
+                { title: "Trëndi", streams: 0, daily: 0, tracks: 0 },
+                { title: "Alivë", streams: 0, daily: 0, tracks: 0 },
+                { title: "LYFESTYLE", streams: 0, daily: 0, tracks: 0 },
+                { title: "DANGEROUS SUMMER", streams: 0, daily: 0, tracks: 0 }
+            ]);
 
-  const [albums, setAlbums] = React.useState([
-    { title: "Up 2 Më", streams: 0, daily: 0, tracks: 0 },
-    { title: "Lyfë", streams: 0, daily: 0, tracks: 0 },
-    { title: "2 Alivë", streams: 0, daily: 0, tracks: 0 },
-    { title: "2093", streams: 0, daily: 0, tracks: 0 },
-    { title: "AftërLyfe", streams: 0, daily: 0, tracks: 0 },
-    { title: "4L", streams: 0, daily: 0, tracks: 0 },
-    { title: "Trëndi", streams: 0, daily: 0, tracks: 0 },
-    { title: "Alivë", streams: 0, daily: 0, tracks: 0 },
-    { title: "LYFESTYLE", streams: 0, daily: 0, tracks: 0 },
-    { title: "DANGEROUS SUMMER", streams: 0, daily: 0, tracks: 0 }
-  ]);
+            React.useEffect(() => { loadAllData(); }, []);
 
-  React.useEffect(() => {
-    loadAllData();
-  }, []);
+            const loadAllData = async () => {
+                try {
+                    setLoading(true); setError(null);
 
-  const loadAllData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+                    const end = new Date();
+                    const start = new Date(); start.setDate(start.getDate() - 365);
+                    const possibleDates = [];
+                    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                        possibleDates.push(dateToStr(d));
+                    }
 
-      // 1. Discover all CSV dates (last 365 days)
-      const end = new Date();
-      const start = new Date(); start.setDate(start.getDate() - 365);
-      const possibleDates = [];
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        possibleDates.push(dateToStr(d));
-      }
+                    const existingDates = (await Promise.all(
+                        possibleDates.map(async d => {
+                            try {
+                                const res = await fetch(RAW_BASE + d + '.csv', { method: 'HEAD' });
+                                return res.ok ? d : null;
+                            } catch { return null; }
+                        })
+                    )).filter(Boolean).sort().reverse();
 
-      const existingDates = (await Promise.all(
-        possibleDates.map(async d => {
-          try {
-            const res = await fetch(RAW_BASE + d + '.csv', { method: 'HEAD' });
-            return res.ok ? d : null;
-          } catch { return null; }
-        })
-      )).filter(Boolean).sort().reverse();
+                    if (!existingDates.length) throw new Error('No CSV files found. Check GitHub Pages and repo.');
 
-      if (!existingDates.length) throw new Error('No CSV files found. Check repo and GitHub Pages.');
+                    const todayStr = existingDates[0];
+                    const oldStr = find28DayOld(existingDates, todayStr);
+                    setLatestDate(todayStr);
 
-      const todayStr = existingDates[0];
-      const oldStr = find28DayOld(existingDates, todayStr); // ← FIXED
-      setLatestDate(todayStr);
+                    const loadCSV = async (d) => {
+                        const res = await fetch(RAW_BASE + d + '.csv?t=' + Date.now());
+                        const text = await res.text();
+                        return Papa.parse(text, { header: true, skipEmptyLines: true, transformHeader: h => h.trim() }).data;
+                    };
 
-      // 2. Load latest + 28-day-old
-      const loadCSV = async (d) => {
-        const res = await fetch(RAW_BASE + d + '.csv?t=' + Date.now());
-        const text = await res.text();
-        return Papa.parse(text, {
-          header: true,
-          skipEmptyLines: true,
-          transformHeader: h => h.trim()
-        }).data;
-      };
+                    const [latestData, oldData] = await Promise.all([loadCSV(todayStr), loadCSV(oldStr)]);
 
-      const [latestData, oldData] = await Promise.all([loadCSV(todayStr), loadCSV(oldStr)]);
+                    const rawHistory = {}, rawAlbumHistory = {}, rawTotalHistory = [];
+                    for (const date of existingDates) {
+                        const rows = await loadCSV(date);
+                        let dailySum = 0, totalSum = 0;
+                        rows.forEach(row => {
+                            const title = row.Song || '';
+                            const album = row.Album || '';
+                            const daily = toNum(row['Spotify daily']);
+                            const total = toNum(row['Spotify total']);
+                            if (!title || !album) return;
 
-      // 3. Build history (background)
-      const rawHistory = {};
-      const rawAlbumHistory = {};
-      const rawTotalHistory = [];
+                            const key = title.toLowerCase() === 'already rich' ? 'Already Rich' : `${title}|${album}`;
+                            if (!rawHistory[key]) rawHistory[key] = [];
+                            rawHistory[key].push({ date, streams: total, daily });
 
-      for (const date of existingDates) {
-        const rows = await loadCSV(date);
-        let dailySum = 0, totalSum = 0;
+                            if (!rawAlbumHistory[album]) rawAlbumHistory[album] = [];
+                            const albumEntry = rawAlbumHistory[album].find(e => e.date === date);
+                            if (albumEntry) {
+                                albumEntry.streams += total;
+                                albumEntry.daily += daily;
+                            } else {
+                                rawAlbumHistory[album].push({ date, streams: total, daily });
+                            }
 
-        rows.forEach(row => {
-          const title = row.Song || '';
-          const album = row.Album || '';
-          const daily = toNum(row['Spotify daily']);
-          const total = toNum(row['Spotify total']);
-          if (!title || !album) return;
+                            dailySum += daily;
+                            totalSum += total;
+                        });
+                        rawTotalHistory.push({ date, streams: totalSum, daily: dailySum });
+                    }
 
-          const key = title.toLowerCase() === 'already rich' ? 'Already Rich' : `${title}|${album}`;
-          if (!rawHistory[key]) rawHistory[key] = [];
-          rawHistory[key].push({ date, streams: total, daily });
+                    Object.keys(rawHistory).forEach(k => rawHistory[k].sort((a,b) => strToDate(a.date) - strToDate(b.date)));
+                    Object.keys(rawAlbumHistory).forEach(k => rawAlbumHistory[k].sort((a,b) => strToDate(a.date) - strToDate(b.date)));
+                    rawTotalHistory.sort((a,b) => strToDate(a.date) - strToDate(b.date));
 
-          if (!rawAlbumHistory[album]) rawAlbumHistory[album] = [];
-          const albumEntry = rawAlbumHistory[album].find(e => e.date === date);
-          if (albumEntry) {
-            albumEntry.streams += total;
-            albumEntry.daily += daily;
-          } else {
-            rawAlbumHistory[album].push({ date, streams: total, daily });
-          }
+                    setHistoryData(rawHistory);
+                    setAlbumHistoryData(rawAlbumHistory);
+                    setTotalHistoryData(rawTotalHistory);
 
-          dailySum += daily;
-          totalSum += total;
-        });
+                    processCSVData(latestData, oldData);
+                    setLoading(false);
 
-        rawTotalHistory.push({ date, streams: totalSum, daily: dailySum });
-      }
+                } catch (e) {
+                    console.error(e);
+                    setError(e.message || 'Failed to load data');
+                    setLoading(false);
+                }
+            };
 
-      // Sort histories
-      Object.keys(rawHistory).forEach(k => rawHistory[k].sort((a,b) => strToDate(a.date) - strToDate(b.date)));
-      Object.keys(rawAlbumHistory).forEach(k => rawAlbumHistory[k].sort((a,b) => strToDate(a.date) - strToDate(b.date)));
-      rawTotalHistory.sort((a,b) => strToDate(a.date) - strToDate(b.date));
+            const processCSVData = (latestRows, oldRows) => {
+                const oldMap = {};
+                oldRows.forEach(r => {
+                    const k = (r.Song||'').toLowerCase() === 'already rich' ? 'Already Rich' : `${r.Song}|${r.Album}`;
+                    oldMap[k] = toNum(r['Spotify total']);
+                });
 
-      setHistoryData(rawHistory);
-      setAlbumHistoryData(rawAlbumHistory);
-      setTotalHistoryData(rawTotalHistory);
+                const songMap = {};
+                latestRows.forEach(r => {
+                    const title = r.Song || '';
+                    const album = r.Album || '';
+                    if (!title) return;
+                    const key = title.toLowerCase() === 'already rich' ? 'Already Rich' : `${title}|${album}`;
+                    const total = toNum(r['Spotify total']);
+                    const daily = toNum(r['Spotify daily']);
+                    const old = oldMap[key] || 0;
+                    const growth = old > 0 ? ((total - old) / old) * 100 : (old === 0 && total > 0 ? 999999 : 0);
+                    songMap[key] = { title, album, streams: total, daily, growth };
+                });
 
-      // 4. Process latest data
-      processCSVData(latestData, oldData);
-      setLoading(false);
+                const processedSongs = Object.values(songMap);
+                setSongs(processedSongs);
+                calculateStats(processedSongs);
+            };
 
-    } catch (e) {
-      console.error(e);
-      setError(e.message || 'Failed to load data');
-      setLoading(false);
-    }
-  };
+            const calculateStats = (processedSongs) => {
+                const totalStreams = processedSongs.reduce((s, song) => s + song.streams, 0);
+                const totalDaily = processedSongs.reduce((s, song) => s + song.daily, 0);
+                const totalTracks = processedSongs.length;
 
-  const processCSVData = (latestRows, oldRows) => {
-    const oldMap = {};
-    oldRows.forEach(r => {
-      const k = (r.Song||'').toLowerCase() === 'already rich' ? 'Already Rich' : `${r.Song}|${r.Album}`;
-      oldMap[k] = toNum(r['Spotify total']);
-    });
+                const featureTracks = processedSongs.filter(s => s.album === "Features");
+                const featureStreams = featureTracks.reduce((s, song) => s + song.streams, 0);
+                const featureDaily = featureTracks.reduce((s, song) => s + song.daily, 0);
+                const featureCount = featureTracks.length;
 
-    const songMap = {};
-    latestRows.forEach(r => {
-      const title = r.Song || '';
-      const album = r.Album || '';
-      if (!title) return;
-      const key = title.toLowerCase() === 'already rich' ? 'Already Rich' : `${title}|${album}`;
-      const total = toNum(r['Spotify total']);
-      const daily = toNum(r['Spotify daily']);
-      const old = oldMap[key] || 0;
-      const growth = old > 0 ? ((total - old) / old) * 100 : (old === 0 && total > 0 ? 999999 : 0);
-      songMap[key] = { title, album, streams: total, daily, growth };
-    });
+                const leadTracks = processedSongs.filter(s => s.album !== "Features");
+                const leadStreams = leadTracks.reduce((s, song) => s + song.streams, 0);
+                const leadDaily = leadTracks.reduce((s, song) => s + song.daily, 0);
+                const leadCount = leadTracks.length;
 
-    const processedSongs = Object.values(songMap);
-    setSongs(processedSongs);
-    calculateStats(processedSongs);
-  };
+                const soloTracks = leadTracks.filter(s => !s.title.toLowerCase().includes("feat."));
+                const soloStreams = soloTracks.reduce((s, song) => s + song.streams, 0);
+                const soloDaily = soloTracks.reduce((s, song) => s + song.daily, 0);
+                const soloCount = soloTracks.length;
 
-  const calculateStats = (processedSongs) => {
-    const totalStreams = processedSongs.reduce((s, song) => s + song.streams, 0);
-    const totalDaily = processedSongs.reduce((s, song) => s + song.daily, 0);
-    const totalTracks = processedSongs.length;
+                setStatsData({
+                    headers: statsData.headers,
+                    rows: [
+                        { label: 'Streams', values: [totalStreams, leadStreams, soloStreams, featureStreams] },
+                        { label: 'Daily', values: [totalDaily, leadDaily, soloDaily, featureDaily] },
+                        { label: 'Tracks', values: [totalTracks, leadCount, soloCount, featureCount] }
+                    ]
+                });
 
-    const featureTracks = processedSongs.filter(s => s.album === "Features");
-    const featureStreams = featureTracks.reduce((s, song) => s + song.streams, 0);
-    const featureDaily = featureTracks.reduce((s, song) => s + song.daily, 0);
-    const featureCount = featureTracks.length;
+                const albumStats = albums.map(a => {
+                    const songs = processedSongs.filter(s => s.album === a.title);
+                    return {
+                        title: a.title,
+                        streams: songs.reduce((s, song) => s + song.streams, 0),
+                        daily: songs.reduce((s, song) => s + song.daily, 0),
+                        tracks: songs.length
+                    };
+                });
+                setAlbums(albumStats);
+            };
 
-    const leadTracks = processedSongs.filter(s => s.album !== "Features");
-    const leadStreams = leadTracks.reduce((s, song) => s + song.streams, 0);
-    const leadDaily = leadTracks.reduce((s, song) => s + song.daily, 0);
-    const leadCount = leadTracks.length;
+            const formatNumber = (num) => num.toLocaleString('en-US');
+            const formatDate = (dateStr) => {
+                if (!dateStr) return '';
+                const [y, m, d] = dateStr.split('-');
+                return `${parseInt(m)}/${parseInt(d)}/${y.slice(2)}`;
+            };
 
-    const soloTracks = leadTracks.filter(s => !s.title.toLowerCase().includes("feat."));
-    const soloStreams = soloTracks.reduce((s, song) => s + song.streams, 0);
-    const soloDaily = soloTracks.reduce((s, song) => s + song.daily, 0);
-    const soloCount = soloTracks.length;
+            const requestSort = (key) => {
+                setSortConfig(p => ({
+                    key,
+                    direction: p.key === key && p.direction === 'desc' ? 'asc' : 'desc'
+                }));
+            };
 
-    setStatsData({
-      headers: statsData.headers,
-      rows: [
-        { label: 'Streams', values: [totalStreams, leadStreams, soloStreams, featureStreams] },
-        { label: 'Daily', values: [totalDaily, leadDaily, soloDaily, featureDaily] },
-        { label: 'Tracks', values: [totalTracks, leadCount, soloCount, featureCount] }
-      ]
-    });
+            const getSortedData = (data) => {
+                if (!sortConfig.key) return data;
+                return [...data].sort((a, b) => {
+                    const va = a[sortConfig.key] ?? '';
+                    const vb = b[sortConfig.key] ?? '';
+                    if (typeof va === 'string') return sortConfig.direction === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+                    return sortConfig.direction === 'asc' ? va - vb : vb - va;
+                });
+            };
 
-    const albumStats = albums.map(a => {
-      const songs = processedSongs.filter(s => s.album === a.title);
-      return {
-        title: a.title,
-        streams: songs.reduce((s, song) => s + song.streams, 0),
-        daily: songs.reduce((s, song) => s + song.daily, 0),
-        tracks: songs.length
-      };
-    });
-    setAlbums(albumStats);
-  };
+            const filteredData = {
+                songs: getSortedData(songs.filter(s => 
+                    s.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                    s.album.toLowerCase().includes(searchTerm.toLowerCase())
+                )),
+                albums: getSortedData(albums.filter(a => a.title.toLowerCase().includes(searchTerm.toLowerCase())))
+            };
 
-  // [Rest of your UI code — unchanged below]
-  const formatNumber = (num) => num.toLocaleString('en-US');
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '';
-    const [y, m, d] = dateStr.split('-');
-    return `${parseInt(m)}/${parseInt(d)}/${y.slice(2)}`;
-  };
+            const getSortIndicator = (key) => sortConfig.key === key ? (sortConfig.direction === 'asc' ? ' Up' : ' Down') : '';
 
-  const requestSort = (key) => {
-    setSortConfig(p => ({
-      key,
-      direction: p.key === key && p.direction === 'desc' ? 'asc' : 'desc'
-    }));
-  };
+            const handleItemClick = (item) => {
+                const key = activeTab === 'songs' 
+                    ? (item.title.toLowerCase() === 'already rich' ? 'Already Rich' : `${item.title}|${item.album}`)
+                    : item.title;
+                setSelectedItems(p => p.includes(key) ? p : [...p, key]);
+            };
 
-  const getSortedData = (data) => {
-    if (!sortConfig.key) return data;
-    return [...data].sort((a, b) => {
-      const va = a[sortConfig.key] ?? '';
-      const vb = b[sortConfig.key] ?? '';
-      if (typeof va === 'string') return sortConfig.direction === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
-      return sortConfig.direction === 'asc' ? va - vb : vb - va;
-    });
-  };
+            return (
+                <div className="w-full max-w-6xl mx-auto p-2 sm:p-6">
+                    <div className="bg-black border border-white/10 rounded-lg shadow-2xl p-3 sm:p-6">
+                        <div className="mb-4 sm:mb-8">
+                            <h1 className="text-xl sm:text-2xl font-bold mb-2 text-white">Yeat Spotify Stats</h1>
+                            <p className="text-xs sm:text-sm text-white/60">{formatDate(latestDate)}</p>
+                            {error && <div className="mt-2 text-sm text-red-500">Error: {error}</div>}
+                        </div>
 
-  const filteredData = {
-    songs: getSortedData(songs.filter(s => 
-      s.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      s.album.toLowerCase().includes(searchTerm.toLowerCase())
-    )),
-    albums: getSortedData(albums.filter(a => a.title.toLowerCase().includes(searchTerm.toLowerCase())))
-  };
+                        {loading ? (
+                            <div className="text-center py-8 text-white/60">Loading data... Please wait.</div>
+                        ) : (
+                            <>
+                                <div className="overflow-x-auto mb-4 sm:mb-8 table-container">
+                                    <table className="min-w-full">
+                                        <thead>
+                                            <tr>
+                                                <th className="text-left px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80"></th>
+                                                {statsData.headers.map((h, i) => (
+                                                    <th key={i} className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">{h}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {statsData.rows.map((row, i) => (
+                                                <tr key={i} className={`${i % 2 === 0 ? 'bg-black' : 'bg-white/5'} ${row.label === 'Streams' ? 'cursor-pointer hover:bg-white/10' : ''}`} onClick={() => row.label === 'Streams' && setShowTotalChart(true)}>
+                                                    <td className="px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white/80">{row.label}</td>
+                                                    {row.values.map((v, j) => (
+                                                        <td key={j} className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">{formatNumber(v)}</td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
 
-  const getSortIndicator = (key) => sortConfig.key === key ? (sortConfig.direction === 'asc' ? ' Up' : ' Down') : '';
+                                <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center mb-4 sm:mb-6 gap-3">
+                                    <div className="flex gap-2 sm:gap-4">
+                                        <button className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === 'songs' ? 'bg-white text-black' : 'bg-black text-white/80 border border-white/20 hover:bg-white/10'}`} onClick={() => { setActiveTab('songs'); setSelectedItems([]); }}>Songs</button>
+                                        <button className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === 'albums' ? 'bg-white text-black' : 'bg-black text-white/80 border border-white/20 hover:bg-white/10'}`} onClick={() => { setActiveTab('albums'); setSelectedItems([]); }}>Albums</button>
+                                    </div>
+                                    <input type="text" placeholder="Search..." className="w-full sm:w-auto px-4 py-2 text-sm rounded-lg border border-white/20 bg-black text-white placeholder-white/40 focus:outline-none focus:border-white/40" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                </div>
 
-  const handleItemClick = (item) => {
-    const key = activeTab === 'songs' 
-      ? (item.title.toLowerCase() === 'already rich' ? 'Already Rich' : `${item.title}|${item.album}`)
-      : item.title;
-    setSelectedItems(p => p.includes(key) ? p : [...p, key]);
-  };
+                                <div className="overflow-x-auto table-container">
+                                    <table className="min-w-full">
+                                        <thead>
+                                            <tr className="border-b border-white/10">
+                                                <th className="text-left px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">#</th>
+                                                <th className="text-left px-2 sm:px-4 py-2 text-xs sm:text-sm cursor-pointer hover:text-white text-white/80" onClick={() => requestSort('title')}>Title{getSortIndicator('title')}</th>
+                                                {activeTab === 'songs' && <th className="text-left px-2 sm:px-4 py-2 text-xs sm:text-sm cursor-pointer hover:text-white text-white/80" onClick={() => requestSort('album')}>Album{getSortIndicator('album')}</th>}
+                                                {activeTab === 'albums' && <th className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">Tracks</th>}
+                                                <th className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm cursor-pointer hover:text-white text-white/80" onClick={() => requestSort('streams')}>Streams{getSortIndicator('streams')}</th>
+                                                <th className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm cursor-pointer hover:text-white text-white/80" onClick={() => requestSort('daily')}>Daily{getSortIndicator('daily')}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {filteredData[activeTab].map((item, i) => (
+                                                <tr key={i} className={`${i % 2 === 0 ? 'bg-black' : 'bg-white/5'} cursor-pointer hover:bg-white/10`} onClick={() => handleItemClick(item)}>
+                                                    <td className="px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/60">{i + 1}</td>
+                                                    <td className="px-2 sm:px-4 py-2 text-xs sm:text-sm text-white">{item.title}</td>
+                                                    {activeTab === 'songs' && <td className="px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/60">{item.album}</td>}
+                                                    {activeTab === 'albums' && <td className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">{item.tracks}</td>}
+                                                    <td className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">{formatNumber(item.streams)}</td>
+                                                    <td className="text-right px-2 sm:px-4 py-2 text-xs sm:text-sm text-white/80">{formatNumber(item.daily)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
 
-  return (
-    <div className="w-full max-w-6xl mx-auto p-2 sm:p-6">
-      <div className="bg-black border border-white/10 rounded-lg shadow-2xl p-3 sm:p-6">
-        <div className="mb-4 sm:mb-8">
-          <h1 className="text-xl sm:text-2xl font-bold mb-2 text-white">Yeat Spotify Stats</h1>
-          <p className="text-xs sm:text-sm text-white/60">{formatDate(latestDate)}</p>
-          {error && <div className="mt-2 text-sm text-red-500">Error: {error}</div>}
-        </div>
+                                {selectedItems.length > 0 && (
+                                    <ComparisonChart 
+                                        itemKeys={selectedItems} 
+                                        itemsData={activeTab === 'songs' ? songs : albums} 
+                                        historyData={activeTab === 'songs' ? historyData : albumHistoryData} 
+                                        isAlbum={activeTab === 'albums'} 
+                                        onClose={() => setSelectedItems([])} 
+                                    />
+                                )}
+                                {showTotalChart && <TotalChart historyData={totalHistoryData} onClose={() => setShowTotalChart(false)} />}
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+        };
 
-        {loading ? (
-          <div className="text-center py-8 text-white/60">Loading data... Please wait.</div>
-        ) : (
-          <>
-            {/* [Your stats table, tabs, search, table, charts — unchanged] */}
-            {/* Paste the rest of your original UI code here */}
-            {/* I'll keep it short — just replace the script block */}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
+        const TotalChart = ({ historyData, onClose }) => {
+            const canvasRef = React.useRef(null);
+            const chartRef = React.useRef(null);
+            const [dateRange, setDateRange] = React.useState('all');
 
-/* === Keep your TotalChart, ComparisonChart, etc. below === */
-// ... (your existing chart components)
+            React.useEffect(() => {
+                if (!historyData.length) return;
+                const dates = historyData.map(e => e.date).sort();
+                const labels = dates.map(d => new Date(d).toLocaleDateString('en', {month:'short', day:'numeric'}));
+                const data = dates.map(d => historyData.find(e => e.date === d)?.daily || 0);
 
-window.onload = () => {
-  const root = ReactDOM.createRoot(document.getElementById('root'));
-  root.render(<YeatStats />);
-};
-</script>
+                const ctx = canvasRef.current.getContext('2d');
+                if (chartRef.current) chartRef.current.destroy();
+                chartRef.current = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels, datasets: [{ label: 'Daily Streams', data, borderColor: '#60A5FA', backgroundColor: '#60A5FA33', fill: true, tension: 0.3 }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#fff' } } }, scales: { x: { ticks: { color: '#fff' } }, y: { ticks: { color: '#fff' }, beginAtZero: true } } }
+                });
+            }, [historyData, dateRange]);
+
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()}>
+                        <button className="close-button" onClick={onClose}>×</button>
+                        <h2 className="text-lg font-bold text-white mb-4">Total Daily Streams</h2>
+                        <div className="chart-container"><canvas ref={canvasRef}></canvas></div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ComparisonChart = ({ itemKeys = [], itemsData, historyData, isAlbum, onClose }) => {
+            const canvasRef = React.useRef(null);
+            const chartRef = React.useRef(null);
+            const [compareItems, setCompareItems] = React.useState(itemKeys);
+
+            React.useEffect(() => {
+                if (!compareItems.length || !historyData) return;
+
+                const allDates = new Set();
+                compareItems.forEach(key => {
+                    const hist = isAlbum ? historyData[key] : historyData[key];
+                    (hist || []).forEach(r => allDates.add(r.date));
+                });
+
+                const dates = Array.from(allDates).sort((a,b) => strToDate(a) - strToDate(b));
+                const colors = ['#60A5FA','#F87171','#34D399','#FBBF24','#A78BFA','#EC4899','#10B981'];
+
+                const datasets = compareItems.map((key, i) => {
+                    const hist = isAlbum ? historyData[key] : historyData[key];
+                    const data = dates.map(d => hist?.find(r => r.date === d)?.daily || 0);
+                    return {
+                        label: isAlbum ? key : key.split('|')[0],
+                        data,
+                        borderColor: colors[i % colors.length],
+                        backgroundColor: colors[i % colors.length] + '33',
+                        tension: 0.3,
+                        fill: true
+                    };
+                });
+
+                const ctx = canvasRef.current.getContext('2d');
+                if (chartRef.current) chartRef.current.destroy();
+                chartRef.current = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: dates.map(d => new Date(d).toLocaleDateString('en', {month:'short', day:'numeric'})), datasets },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#fff' } } }, scales: { x: { ticks: { color: '#fff' } }, y: { ticks: { color: '#fff' }, beginAtZero: true } } }
+                });
+            }, [compareItems, historyData, isAlbum]);
+
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()}>
+                        <button className="close-button" onClick={onClose}>×</button>
+                        <h2 className="text-lg font-bold text-white mb-4">Compare {isAlbum ? 'Albums' : 'Songs'}</h2>
+                        <div className="chart-container"><canvas ref={canvasRef}></canvas></div>
+                    </div>
+                </div>
+            );
+        };
+
+        window.onload = () => {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(React.createElement(YeatStats));
+        };
+    </script>
+</body>
+</html>
