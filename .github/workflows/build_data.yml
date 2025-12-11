@@ -1,0 +1,38 @@
+name: Build all_data.json
+
+on:
+  push:
+    paths:
+      - "*.csv"
+      - "merge_csvs.py"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Run merge_csvs.py
+        run: python merge_csvs.py
+
+      - name: Commit updated all_data.json
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          if git diff --quiet; then
+            echo "No changes to commit."
+          else
+            git add all_data.json
+            git commit -m "Automated update of all_data.json"
+            git push
+          fi
