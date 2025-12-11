@@ -163,28 +163,111 @@ function App(){
   }
 
   async function quickCSVSnapshotAndProcess(){
-    // Loads latest available CSV (today) and 28-days-ago CSV if present to compute 28d growth
-    const today = new Date();
-    const todayStr = dateToStr(today);
-    const d28 = new Date(today);
-    d28.setDate(d28.getDate() - 28);
-    const d28Str = dateToStr(d28);
+  // Instead of assuming today's CSV exists,
+  // search backwards from today to find the most recent CSV (up to 7 days back).
+  const today = new Date();
 
-    // try to fetch today and d28
-    setLoadingMsg(`Fetching quick snapshots: ${todayStr} & ${d28Str}`);
-    const fetches = await Promise.allSettled([
-      fetch(`${CSV_BASE_PATH}${todayStr}.csv?t=${Date.now()}`, {cache:'no-store'}),
-      fetch(`${CSV_BASE_PATH}${d28Str}.csv?t=${Date.now()}`, {cache:'no-store'})
-    ]);
+  setLoadingMsg('Searching for latest CSV (up to last 7 days)...');
 
-    const todayText = (fetches[0].status === 'fulfilled' && fetches[0].value.ok) ? await fetches[0].value.text() : null;
-    const oldText = (fetches[1].status === 'fulfilled' && fetches[1].value.ok) ? await fetches[1].value.text() : null;
+  let latestDateStr = null;
+  let latestText = null;
 
-    if (!todayText) {
-      // try fallback: find any CSV in repo by attempting index? If none found, show error
-      setError('No recent CSV found (today). Please ensure the latest CSV exists in the repo (YYYY-MM-DD.csv).');
-      return;
+  for (let offset = 1; offset <= 7; offset++) {
+    // start from yesterday (offset = 1), then 2 days ago, etc.
+    const d = new Date(today);
+    d.setDate(d.getDate() - offset);
+    const candidate = dateToStr(d);
+
+    try {
+      const res = await fetch(`${CSV_BASE_PATH}${candidate}.csv?t=${Date.now()}`, { cache: 'no-store' });
+      if (res.ok) {
+        latestText = await res.text();
+        latestDateStr = candidate;
+        break;
+      }
+    } catch (e) {
+      // ignore and keep searching
     }
+  }
+
+  if (!latestText || !latestDateStr) {
+    setError('No recent CSV found in the last 7 days. Please ensure at least one recent YYYY-MM-DD.csv exists in the repo.');
+    return;
+  }
+
+  // Now compute the "28 days ago" date relative to the latest CSV we actually found
+  const d28 = new Date(latestDateStr + 'T00:00:00Z');
+  d28.setDate(d28.getDate() - 28);
+  const d28Str = dateToStr(d28);
+
+  let oldText = null;
+  try {
+    const resOld = await fetch(`${CSV_BASE_PATH}${d28Str}.csv?t=${Date.now()}`, { cache: 'no-store' });
+    if (resOld.ok) {
+      oldText = await resOld.text();
+    }
+  } catch (e) {
+    // it's okay if the 28d-ago file doesn't exist — growth will just show as "new" or 0
+  }
+
+  setLatestDate(latestDateStr);
+
+  // parse CSVs
+  const todayRows = Papa.parse(latestText, { header: true, skipEmptyLines: true }).data;
+  const oldRows = oldText ? Papa.parse(oldText, { header: true, skipEmptyLines: true }).data : [];
+
+  const oldMap = {};
+  oldRows.forEach(r => {
+    const t = (r.Song || '').trim();
+    const a = (r.Album || '').trim();
+    if (!t) return;
+    oldMap[`${t}|${a}`] = parseIntSafe(r['Spotify total'] || r['Spotify Total'] || r['spotify total']);
+  });
+
+  const songMap = {};
+  todayRows.forEach(r => {
+    const t = (r.Song || '').trim();
+    const a = (r.Album || '').trim();
+    if (!t) return;
+    const key = `${t}|${a}`;
+    const total = parseIntSafe(r['Spotify total'] || r['Spotify Total'] || r['spotify total']);
+    const daily = parseIntSafe(r['Spotify daily'] || r['Spotify Daily'] || r['spotify daily']);
+    const old = oldMap[key] || 0;
+    const growth = old > 0 ? ((total - old) / old) * 100
+                           : (old === 0 && total > 0 ? 999999 : 0);
+    songMap[key] = { key, title: t, album: a, streams: total, daily, growth28: growth };
+  });
+
+  const songsArr = Object.values(songMap);
+
+  const albumMap = {};
+  songsArr.forEach(s => {
+    const a = s.album || 'Unknown';
+    if (!albumMap[a]) {
+      albumMap[a] = { key: `ALBUM::${a}`, title: a, streams: 0, daily: 0, tracks: 0, growths: [] };
+    }
+    albumMap[a].streams += s.streams;
+    albumMap[a].daily += s.daily;
+    albumMap[a].tracks += 1;
+    if (s.growth28 !== 999999) albumMap[a].growths.push(s.growth28);
+  });
+
+  const albumsArr = Object.keys(albumMap).map(k => {
+    const v = albumMap[k];
+    const avg = v.growths.length ? (v.growths.reduce((a,b)=>a+b,0)/v.growths.length) : 0;
+    return { key: v.key, title: v.title, streams: v.streams, daily: v.daily, tracks: v.tracks, growth28: avg };
+  });
+
+  setSongs(songsArr);
+  setAlbums(albumsArr);
+
+  // cache quick snapshot
+  writeCache({ latestDate: latestDateStr, snapshotAt: Date.now() });
+
+  // background fetch CSV history (non-blocking)
+  backgroundCsvScan(latestDateStr);
+}
+
 
     setLatestDate(todayStr);
 
