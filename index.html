@@ -14,43 +14,40 @@
 
 <style>
 :root {
-    --card-bg: rgba(255,255,255,0.04);
+    --bg: #050505;
+    --card: rgba(255,255,255,0.04);
     --border: rgba(255,255,255,0.12);
     --muted: rgba(255,255,255,0.55);
+    --highlight: #ffffff;
 }
 body {
-    background: #040404;
-    color: white;
+    background: var(--bg);
+    color: var(--highlight);
     font-family: Inter, system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased;
 }
 .card {
-    background: var(--card-bg);
+    background: var(--card);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 14px;
+    padding: 16px;
 }
 .topbar {
-    background: rgba(0,0,0,0.45);
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(16px);
     border-bottom: 1px solid rgba(255,255,255,0.08);
-    padding: 16px;
+    padding: 18px;
     position: sticky;
     top: 0;
     z-index: 50;
-    backdrop-filter: blur(10px);
-}
-.no-scroll {
-    overflow: hidden;
 }
 .table-container {
-    max-height: calc(100vh - 200px);
     overflow-y: visible !important;
 }
 .modal-bg {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.75);
-    backdrop-filter: blur(12px);
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(14px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -59,7 +56,7 @@ body {
 .modal-window {
     width: 100vw;
     height: 100vh;
-    padding: 20px;
+    padding: 28px;
 }
 </style>
 
@@ -73,11 +70,13 @@ body {
    CONFIG
 ------------------------------------------------------------- */
 const CSV_BASE_PATH = "./";
+const MAX_COMPARE = 10;
+
+// Albums to show only
 const HARDCODED_ALBUMS = [
     "2 Alivë","Up 2 Më","Aftërlyfe","4L",
     "DANGEROUS SUMMER","Alivë","2093","Lyfë","Trëndi"
 ];
-const MAX_COMPARE = 10;
 
 /* -------------------------------------------------------------
    UTILITIES
@@ -94,7 +93,6 @@ const fmt = n => (n ?? 0).toLocaleString();
    MAIN APP
 ------------------------------------------------------------- */
 function App() {
-
     const [songs, setSongs] = React.useState([]);
     const [albums, setAlbums] = React.useState([]);
     const [history, setHistory] = React.useState({});
@@ -107,6 +105,7 @@ function App() {
 
     const [search, setSearch] = React.useState("");
     const [tab, setTab] = React.useState("songs");
+
     const [sortKey, setSortKey] = React.useState("streams");
     const [sortDir, setSortDir] = React.useState("desc");
 
@@ -128,7 +127,7 @@ function App() {
                 if (json) {
                     applyJSON(json);
                     setLoading(false);
-                    scanHistory(json.latestDate); // background
+                    scanHistory(json.latestDate);
                     return;
                 }
 
@@ -145,15 +144,14 @@ function App() {
         })();
     }, []);
 
-    /* ---------------------------------------------------------
-       LOAD all_data.json
-    --------------------------------------------------------- */
     async function loadJSON() {
         try {
             const res = await fetch(`${CSV_BASE_PATH}all_data.json?t=${Date.now()}`, {cache:"no-store"});
             if (!res.ok) return null;
             return await res.json();
-        } catch { return null; }
+        } catch {
+            return null;
+        }
     }
 
     function applyJSON(json) {
@@ -165,13 +163,14 @@ function App() {
     }
 
     /* ---------------------------------------------------------
-       FALLBACK CSV (find most recent file)
+       CSV FALLBACK
     --------------------------------------------------------- */
     async function fallbackCSV() {
         const today = new Date();
         let latest = null;
         let latestText = null;
 
+        // Find latest CSV within 7 days
         for (let offset=1; offset<=7; offset++) {
             const d = new Date(today);
             d.setDate(today.getDate()-offset);
@@ -190,7 +189,7 @@ function App() {
 
         setLatestDate(latest);
 
-        // 28 days ago
+        // 28 days earlier
         const d28 = new Date(latest+"T00:00:00Z");
         d28.setDate(d28.getDate()-28);
         const d28Str = dateToStr(d28);
@@ -253,22 +252,26 @@ function App() {
     }
 
     /* ---------------------------------------------------------
-       HISTORY SCAN (for charts)
+       HISTORY SCAN
     --------------------------------------------------------- */
     async function scanHistory(latest) {
         try {
             const anchor = new Date(latest+"T00:00:00Z");
             const collected=[];
+
             for (let i=0;i<400;i++){
                 const d=new Date(anchor);
                 d.setDate(anchor.getDate()-i);
                 const str=dateToStr(d);
+
                 try{
                     const res=await fetch(`${CSV_BASE_PATH}${str}.csv?t=${Date.now()}`);
                     if(!res.ok) break;
                     const text=await res.text();
                     collected.push({date:str,text});
-                }catch{ break; }
+                } catch {
+                    break;
+                }
             }
 
             const hist={};
@@ -276,26 +279,22 @@ function App() {
 
             collected.reverse().forEach(day=>{
                 const rows=Papa.parse(day.text,{header:true,skipEmptyLines:true}).data;
+
                 let sumDaily=0,sumTotal=0;
 
                 rows.forEach(r=>{
-                    const t=(r.Song||"").trim();
-                    const a=(r.Album||"").trim();
-                    if(!t)return;
-
-                    const key=`${t}|${a}`;
+                    const key=`${(r.Song||"").trim()}|${(r.Album||"").trim()}`;
                     const daily=parseIntSafe(r["Spotify daily"]);
-                    const totalS=parseIntSafe(r["Spotify total"]);
+                    const streams=parseIntSafe(r["Spotify total"]);
 
-                    // clean values
                     const cleanDaily = daily>0?daily:null;
-                    const cleanTotal = totalS>0?totalS:null;
+                    const cleanTotal = streams>0?streams:null;
 
-                    if(!hist[key])hist[key]=[];
+                    if(!hist[key]) hist[key]=[];
                     hist[key].push({date:day.date,daily:cleanDaily,streams:cleanTotal});
 
-                    if(cleanDaily)sumDaily+=cleanDaily;
-                    if(cleanTotal)sumTotal+=cleanTotal;
+                    if(cleanDaily) sumDaily+=cleanDaily;
+                    if(cleanTotal) sumTotal+=cleanTotal;
                 });
 
                 total.push({date:day.date,daily:sumDaily,streams:sumTotal});
@@ -304,12 +303,13 @@ function App() {
             setHistory(hist);
             setTotalHistory(total);
 
-        }catch(e){}
+        }catch(e){
+            console.error(e);
+        }
     }
 
-
     /* ---------------------------------------------------------
-       SORTING / FILTERING
+       SORT / FILTER
     --------------------------------------------------------- */
     function sorted(list){
         const arr=[...list];
@@ -342,7 +342,7 @@ function App() {
     }
 
     /* ---------------------------------------------------------
-       CHART OPEN / COMPARE LOGIC
+       CLICK HANDLERS (single → chart, CTRL → compare)
     --------------------------------------------------------- */
     function openSingleChart(item){
         setModalTitle(item.title);
@@ -356,7 +356,7 @@ function App() {
             ? (compareKeys[0].startsWith("ALBUM::")?"album":"song")
             : type;
 
-        if(type!==currentType)return;
+        if(type!==currentType) return;
 
         let newList=[...compareKeys];
         if(newList.includes(item.key)){
@@ -389,7 +389,6 @@ function App() {
     const totalTracks = songs.length;
 
     function openTotalChart(type){
-        // use special key "__TOTAL_STREAMS__" or "__TOTAL_DAILY__"
         if(type==="streams"){
             setModalTitle("Total Streams");
             setModalItems(["__TOTAL_STREAMS__"]);
@@ -402,7 +401,7 @@ function App() {
     }
 
     /* ---------------------------------------------------------
-       RENDER
+       RENDER UI
     --------------------------------------------------------- */
     return (
 <div className="">
@@ -428,7 +427,7 @@ function App() {
         </div>
     </div>
 
-    {/* TAB + SEARCH */}
+    {/* SEARCH + TABS */}
     <div className="max-w-5xl mx-auto p-4">
         <div className="flex justify-between mb-4">
             <div className="flex gap-2">
@@ -457,10 +456,13 @@ function App() {
                         <th className="text-left py-2 px-2 cursor-pointer" onClick={()=>toggleSort("title")}>
                             Title {sortIndicator("title")}
                         </th>
+
                         {tab==="songs" &&
-                        <th className="text-left py-2 px-2 cursor-pointer" onClick={()=>toggleSort("album")}>
-                            Album {sortIndicator("album")}
-                        </th>}
+                            <th className="text-left py-2 px-2 cursor-pointer" onClick={()=>toggleSort("album")}>
+                                Album {sortIndicator("album")}
+                            </th>
+                        }
+
                         <th className="text-right py-2 px-2 cursor-pointer" onClick={()=>toggleSort("streams")}>
                             Streams {sortIndicator("streams")}
                         </th>
@@ -474,12 +476,16 @@ function App() {
                 </thead>
 
                 <tbody>
-                    {(tab==="songs"?filteredSongs:filteredAlbums).map((item,idx)=>(
+                    {(tab==="songs"?filteredSongs:filteredAlbums).map(item=>(
                         <tr key={item.key}
                             onClick={e=>onRowClick(e,item)}
                             className="border-t border-white/10 hover:bg-white/10 cursor-pointer">
                             <td className="py-3 px-2">{item.title}</td>
-                            {tab==="songs" && <td className="py-3 px-2 text-white/60">{item.album}</td>}
+
+                            {tab==="songs" &&
+                                <td className="py-3 px-2 text-white/60">{item.album}</td>
+                            }
+
                             <td className="py-3 px-2 text-right">{fmt(item.streams)}</td>
                             <td className="py-3 px-2 text-right">{fmt(item.daily)}</td>
                             <td className="py-3 px-2 text-right">
@@ -496,7 +502,7 @@ function App() {
         </div>
     </div>
 
-    {/* MODAL */}
+    {/* CHART MODAL */}
     {showModal &&
         <ChartModal
             items={modalItems}
@@ -533,14 +539,16 @@ function ChartModal({items, title, onClose, history, totalHistory}){
         if(chartRef.current) chartRef.current.destroy();
 
         const ctx = canvasRef.current.getContext("2d");
-
         let datasets=[];
         let labels=[];
 
-        // special total charts
+        // TOTAL STREAMS
         if(items.length===1 && items[0]==="__TOTAL_STREAMS__"){
-            const filtered=cleanTotals(totalHistory.map(r=>({date:r.date,val:r.streams})));
-            labels=filtered.map(r=>r.date);
+            const filtered = totalHistory
+                .filter(r=>r.streams>0)
+                .map(r=>({date:r.date,val:r.streams}));
+
+            labels = filtered.map(r=>r.date);
             datasets=[{
                 label:"Total Streams",
                 data:filtered.map(r=>r.val),
@@ -548,49 +556,58 @@ function ChartModal({items, title, onClose, history, totalHistory}){
                 tension:.25
             }];
         }
+        // TOTAL DAILY
         else if(items.length===1 && items[0]==="__TOTAL_DAILY__"){
-            const filtered=cleanTotals(totalHistory.map(r=>({date:r.date,val:r.daily})));
-            labels=filtered.map(r=>r.date);
+            const filtered = totalHistory
+                .filter(r=>r.daily>0)
+                .map(r=>({date:r.date,val:r.daily}));
+
+            labels = filtered.map(r=>r.date);
             datasets=[{
-                label:"Total Daily",
+                label:"Total Daily Streams",
                 data:filtered.map(r=>r.val),
                 borderColor:"#34D399",
                 tension:.25
             }];
         }
+        // COMPARE / SINGLE SONG/ALBUM
         else {
-            // normal compare chart
             const allDates=new Set();
             items.forEach(k=>{
                 (history[k]||[]).forEach(r=>{
                     if(r.daily>0) allDates.add(r.date);
                 });
             });
-            labels=Array.from(allDates).sort((a,b)=>new Date(a)-new Date(b));
 
-            let used=labels;
+            labels = Array.from(allDates).sort((a,b)=>new Date(a)-new Date(b));
+
+            let used = labels;
             if(range!=="all"){
-                used=labels.slice(-parseInt(range,10));
+                used = labels.slice(-parseInt(range,10));
             }
 
-            const colors=["#60A5FA","#F87171","#34D399","#FBBF24","#A78BFA",
-                          "#EC4899","#10B981","#F59E0B","#06B6D4","#F472B6"];
+            const colors=["#60A5FA","#F87171","#34D399","#FBBF24",
+                          "#A78BFA","#EC4899","#10B981","#F59E0B",
+                          "#06B6D4","#F472B6"];
 
             datasets = items.map((k,idx)=>{
                 const rows=history[k]||[];
                 const map={};
-                rows.forEach(r=>{ if(r.daily>0) map[r.date]=r.daily; });
+                rows.forEach(r=>{
+                    if(r.daily>0) map[r.date]=r.daily;
+                });
 
                 return{
-                    label: k.startsWith("ALBUM::") ? k.replace("ALBUM::","")
-                          : k.split("|")[0],
+                    label: k.startsWith("ALBUM::")
+                        ? k.replace("ALBUM::","")
+                        : k.split("|")[0],
                     data: used.map(d=> map[d]??null ),
                     borderColor: colors[idx%colors.length],
                     tension:.25
                 };
             });
 
-            labels=used;
+            labels = used;
         }
 
         chartRef.current=new Chart(ctx,{
@@ -610,23 +627,21 @@ function ChartModal({items, title, onClose, history, totalHistory}){
         });
     }
 
-    function cleanTotals(arr){
-        return arr.filter(r=> r.val>0 );
-    }
-
     return(
     <div className="modal-bg" onClick={onClose}>
         <div className="modal-window" onClick={e=>e.stopPropagation()}>
-            
-            <div className="flex justify-between items-center mb-3">
-                <div className="text-xl font-semibold">{title}</div>
+
+            {/* HEADER */}
+            <div className="flex justify-between items-center mb-4">
+                <div className="text-2xl font-semibold">{title}</div>
                 <button onClick={onClose}
-                    className="px-4 py-2 bg-white/10 border border-white/20 rounded">
+                    className="px-4 py-2 bg-white/20 border border-white/30 rounded">
                     Close
                 </button>
             </div>
 
-            <div className="flex gap-3 items-center text-sm mb-3">
+            {/* RANGE SELECTOR */}
+            <div className="flex gap-3 items-center text-sm mb-4">
                 <span>Range:</span>
                 <select value={range}
                     onChange={e=>setRange(e.target.value)}
@@ -641,7 +656,8 @@ function ChartModal({items, title, onClose, history, totalHistory}){
                 </select>
             </div>
 
-            <div style="width:100%; height: calc(100vh - 140px);">
+            {/* CHART AREA */}
+            <div style={{ width: "100%", height: "calc(100vh - 180px)" }}>
                 <canvas ref={canvasRef}></canvas>
             </div>
 
@@ -650,7 +666,7 @@ function ChartModal({items, title, onClose, history, totalHistory}){
 }
 
 /* -------------------------------------------------------------
-   MOUNT
+   MOUNT APP
 ------------------------------------------------------------- */
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 
