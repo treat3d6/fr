@@ -1,573 +1,658 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Yeat Stats — Dashboard</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Yeat Stats Dashboard</title>
 
-  <!-- Libraries -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- React / Tailwind / Babel / PapaParse -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <style>
-    :root {
-      --card-bg: rgba(255,255,255,0.04);
-      --muted: rgba(255,255,255,0.62);
-      --border: rgba(255,255,255,0.08);
-      --accent: #60A5FA;
-    }
+<style>
+:root {
+    --card-bg: rgba(255,255,255,0.04);
+    --border: rgba(255,255,255,0.12);
+    --muted: rgba(255,255,255,0.55);
+}
+body {
+    background: #040404;
+    color: white;
+    font-family: Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+}
+.topbar {
+    background: rgba(0,0,0,0.45);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: blur(10px);
+}
+.no-scroll {
+    overflow: hidden;
+}
+.table-container {
+    max-height: calc(100vh - 200px);
+    overflow-y: visible !important;
+}
+.modal-bg {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+.modal-window {
+    width: 100vw;
+    height: 100vh;
+    padding: 20px;
+}
+</style>
 
-    body {
-      margin:0;
-      background: linear-gradient(180deg,#000 0%,#09090d 50%,#030304 100%);
-      color:white;
-      font-family: Inter, ui-sans-serif, system-ui;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px;
-      backdrop-filter: blur(6px);
-    }
-
-    .hover-glow:hover {
-      box-shadow: 0 8px 30px rgba(96,165,250,0.09);
-      transform: translateY(-1px);
-      transition: 0.16s ease;
-    }
-
-    .small { font-size: 13px; }
-    .muted { color: var(--muted); }
-
-    .table-scroll {
-      max-height: calc(70vh);
-      overflow-y: auto;
-    }
-
-    .glass-modal {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.08);
-      backdrop-filter: blur(14px);
-      border-radius: 14px;
-      padding: 18px;
-    }
-
-    .legend-scroll { max-height: 180px; overflow-y: auto; }
-
-    .positive { color: #34D399; }
-    .negative { color: #F87171; }
-  </style>
 </head>
-
 <body>
-  <div id="root"></div>
+<div id="root"></div>
 
 <script type="text/babel">
 
-/* ----------------------------------------------------------
+/* -------------------------------------------------------------
    CONFIG
----------------------------------------------------------- */
-const CSV_BASE_PATH = './';
-const CACHE_KEY = 'yeat_cache_v1';
+------------------------------------------------------------- */
+const CSV_BASE_PATH = "./";
+const HARDCODED_ALBUMS = [
+    "2 Alivë","Up 2 Më","Aftërlyfe","4L",
+    "DANGEROUS SUMMER","Alivë","2093","Lyfë","Trëndi"
+];
 const MAX_COMPARE = 10;
 
-/* ----------------------------------------------------------
+/* -------------------------------------------------------------
    UTILITIES
----------------------------------------------------------- */
-const dateToStr = d => d.toISOString().split('T')[0];
+------------------------------------------------------------- */
+const dateToStr = d => d.toISOString().split("T")[0];
 const parseIntSafe = v => {
-  if (!v) return 0;
-  const x = parseInt(String(v).replace(/,/g,''), 10);
-  return isNaN(x) ? 0 : x;
+    if (!v) return 0;
+    const x = parseInt(String(v).replace(/,/g,''),10);
+    return isNaN(x) ? 0 : x;
 };
 const fmt = n => (n ?? 0).toLocaleString();
 
-/* ----------------------------------------------------------
+/* -------------------------------------------------------------
    MAIN APP
----------------------------------------------------------- */
+------------------------------------------------------------- */
 function App() {
-  const [songs, setSongs] = React.useState([]);
-  const [albums, setAlbums] = React.useState([]);
-  const [history, setHistory] = React.useState({});
-  const [totalHistory, setTotalHistory] = React.useState([]);
-  const [latestDate, setLatestDate] = React.useState(null);
 
-  const [loading, setLoading] = React.useState(true);
-  const [loadingMsg, setLoadingMsg] = React.useState('Loading data...');
-  const [error, setError] = React.useState(null);
+    const [songs, setSongs] = React.useState([]);
+    const [albums, setAlbums] = React.useState([]);
+    const [history, setHistory] = React.useState({});
+    const [totalHistory, setTotalHistory] = React.useState([]);
+    const [latestDate, setLatestDate] = React.useState(null);
 
-  const [search, setSearch] = React.useState('');
-  const [tab, setTab] = React.useState('songs');
-  const [sortKey, setSortKey] = React.useState('streams');
-  const [sortDir, setSortDir] = React.useState('desc');
+    const [loading, setLoading] = React.useState(true);
+    const [loadingMsg, setLoadingMsg] = React.useState("Loading...");
+    const [error, setError] = React.useState(null);
 
-  const [compareKeys, setCompareKeys] = React.useState([]);
-  const [showCompare, setShowCompare] = React.useState(false);
+    const [search, setSearch] = React.useState("");
+    const [tab, setTab] = React.useState("songs");
+    const [sortKey, setSortKey] = React.useState("streams");
+    const [sortDir, setSortDir] = React.useState("desc");
 
-  const chartLibLoaded = React.useRef(false);
+    const [compareKeys, setCompareKeys] = React.useState([]);
+    const [showModal, setShowModal] = React.useState(false);
+    const [modalItems, setModalItems] = React.useState([]);
+    const [modalTitle, setModalTitle] = React.useState("");
 
-  /* ------------------ INITIAL LOAD ------------------ */
-  React.useEffect(() => {
-    (async () => {
-      try {
-        // First try loading all_data.json
-        setLoadingMsg('Loading all_data.json...');
-        const json = await tryLoadJSON();
-        if (json) {
-          applyJSON(json);
-          setLoading(false);
-          backgroundScan(json.latestDate);
-          return;
-        }
 
-        // If no JSON, use CSV fallback
-        setLoadingMsg('Fallback: scanning CSVs...');
-        await quickCSVSnapshot();
-        setLoading(false);
-      } catch (e) {
-        console.error(e);
-        setError(String(e));
-        setLoading(false);
-      }
-    })();
-  }, []);
+    /* ---------------------------------------------------------
+       INITIAL LOAD
+    --------------------------------------------------------- */
+    React.useEffect(() => {
+        (async () => {
+            try {
+                // Try JSON first
+                setLoadingMsg("Loading all_data.json...");
+                const json = await loadJSON();
+                if (json) {
+                    applyJSON(json);
+                    setLoading(false);
+                    scanHistory(json.latestDate); // background
+                    return;
+                }
 
-  /* ----------------------------------------------------------
-     LOAD all_data.json
-  ---------------------------------------------------------- */
-  async function tryLoadJSON() {
-    try {
-      const res = await fetch(`${CSV_BASE_PATH}all_data.json?t=${Date.now()}`, {cache:'no-store'});
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
-  }
+                // Fallback CSV
+                setLoadingMsg("Scanning CSVs...");
+                await fallbackCSV();
+                setLoading(false);
 
-  function applyJSON(json) {
-    setSongs(json.songs ?? []);
-    setAlbums(json.albums ?? []);
-    setHistory(json.history ?? {});
-    setTotalHistory(json.totalHistory ?? []);
-    setLatestDate(json.latestDate ?? null);
-  }
+            } catch(e) {
+                console.error(e);
+                setError(String(e));
+                setLoading(false);
+            }
+        })();
+    }, []);
 
-  /* ----------------------------------------------------------
-     CSV FALLBACK: find the most recent CSV (not today)
-  ---------------------------------------------------------- */
-  async function quickCSVSnapshot() {
-    setLoadingMsg('Searching recent CSV files...');
-
-    const today = new Date();
-    let latest = null;
-    let latestText = null;
-
-    // Search backwards for the nearest CSV (yesterday, 2 days ago, etc.)
-    for (let offset = 1; offset <= 7; offset++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - offset);
-      const str = dateToStr(d);
-
-      try {
-        const res = await fetch(`${CSV_BASE_PATH}${str}.csv?t=${Date.now()}`, { cache:'no-store' });
-        if (res.ok) {
-          latest = str;
-          latestText = await res.text();
-          break;
-        }
-      } catch {}
-    }
-
-    if (!latestText) {
-      throw new Error("No recent CSV found in last 7 days.");
-    }
-
-    setLatestDate(latest);
-
-    // Determine 28d-ago file
-    const d28 = new Date(latest + 'T00:00:00Z');
-    d28.setDate(d28.getDate() - 28);
-    const d28Str = dateToStr(d28);
-
-    let oldText = null;
-    try {
-      const resOld = await fetch(`${CSV_BASE_PATH}${d28Str}.csv?t=${Date.now()}`, {cache:'no-store'});
-      if (resOld.ok) oldText = await resOld.text();
-    } catch {}
-
-    const latestRows = Papa.parse(latestText, {header:true, skipEmptyLines:true}).data;
-    const oldRows = oldText ? Papa.parse(oldText, {header:true, skipEmptyLines:true}).data : [];
-
-    const oldMap = {};
-    oldRows.forEach(r => {
-      const t = (r.Song||'').trim();
-      const a = (r.Album||'').trim();
-      if (t) oldMap[`${t}|${a}`] = parseIntSafe(r['Spotify total']);
-    });
-
-    const songMap = {};
-    latestRows.forEach(r => {
-      const t = (r.Song||'').trim();
-      const a = (r.Album||'').trim();
-      if (!t) return;
-      const key = `${t}|${a}`;
-
-      const total = parseIntSafe(r['Spotify total']);
-      const daily = parseIntSafe(r['Spotify daily']);
-      const old = oldMap[key] ?? 0;
-
-      const growth =
-        old > 0 ? ((total - old) / old) * 100
-        : total > 0 ? 999999
-        : 0;
-
-      songMap[key] = { key, title:t, album:a, streams:total, daily, growth28:growth };
-    });
-
-    const songsArr = Object.values(songMap);
-
-    const albumMap = {};
-    songsArr.forEach(s => {
-      const a = s.album || 'Unknown';
-      if (!albumMap[a]) {
-        albumMap[a] = { key:`ALBUM::${a}`, title:a, streams:0, daily:0, tracks:0, growths:[] };
-      }
-      albumMap[a].streams += s.streams;
-      albumMap[a].daily += s.daily;
-      albumMap[a].tracks += 1;
-      if (s.growth28 !== 999999) albumMap[a].growths.push(s.growth28);
-    });
-
-    const albumsArr = Object.values(albumMap).map(a => ({
-      ...a,
-      growth28: a.growths.length ? a.growths.reduce((x,y)=>x+y)/a.growths.length : 0
-    }));
-
-    setSongs(songsArr);
-    setAlbums(albumsArr);
-
-    backgroundScan(latest);
-  }
-
-  /* ----------------------------------------------------------
-     BACKGROUND CSV HISTORY SCAN (fills charts)
-  ---------------------------------------------------------- */
-  async function backgroundScan(latest) {
-    try {
-      const today = new Date(latest + 'T00:00:00Z');
-      const collected = [];
-
-      for (let i = 0; i < 400; i++) {
-        const d = new Date(today);
-        d.setDate(today.getDate() - i);
-        const str = dateToStr(d);
-
+    /* ---------------------------------------------------------
+       LOAD all_data.json
+    --------------------------------------------------------- */
+    async function loadJSON() {
         try {
-          const res = await fetch(`${CSV_BASE_PATH}${str}.csv?t=${Date.now()}`);
-          if (!res.ok) break;
+            const res = await fetch(`${CSV_BASE_PATH}all_data.json?t=${Date.now()}`, {cache:"no-store"});
+            if (!res.ok) return null;
+            return await res.json();
+        } catch { return null; }
+    }
 
-          const text = await res.text();
-          collected.push({date:str, text});
-        } catch {
-          break;
+    function applyJSON(json) {
+        setSongs(json.songs || []);
+        setAlbums(json.albums || []);
+        setHistory(json.history || {});
+        setTotalHistory(json.totalHistory || []);
+        setLatestDate(json.latestDate || null);
+    }
+
+    /* ---------------------------------------------------------
+       FALLBACK CSV (find most recent file)
+    --------------------------------------------------------- */
+    async function fallbackCSV() {
+        const today = new Date();
+        let latest = null;
+        let latestText = null;
+
+        for (let offset=1; offset<=7; offset++) {
+            const d = new Date(today);
+            d.setDate(today.getDate()-offset);
+            const str = dateToStr(d);
+
+            try {
+                const res = await fetch(`${CSV_BASE_PATH}${str}.csv?t=${Date.now()}`, {cache:"no-store"});
+                if (res.ok) {
+                    latest = str;
+                    latestText = await res.text();
+                    break;
+                }
+            } catch {}
         }
-      }
+        if (!latestText) throw new Error("No recent CSV found");
 
-      const hist = {};
-      const total = [];
+        setLatestDate(latest);
 
-      collected.reverse().forEach(day => {
-        const rows = Papa.parse(day.text, {header:true, skipEmptyLines:true}).data;
+        // 28 days ago
+        const d28 = new Date(latest+"T00:00:00Z");
+        d28.setDate(d28.getDate()-28);
+        const d28Str = dateToStr(d28);
 
-        let sumDaily=0, sumTotal=0;
+        let oldText = null;
+        try {
+            const resOld = await fetch(`${CSV_BASE_PATH}${d28Str}.csv?t=${Date.now()}`, {cache:"no-store"});
+            if (resOld.ok) oldText = await resOld.text();
+        } catch {}
 
-        rows.forEach(r => {
-          const t = (r.Song||'').trim();
-          const a = (r.Album||'').trim();
-          if (!t) return;
+        const latestRows = Papa.parse(latestText, {header:true, skipEmptyLines:true}).data;
+        const oldRows = oldText ? Papa.parse(oldText, {header:true, skipEmptyLines:true}).data : [];
 
-          const key = `${t}|${a}`;
-          const daily = parseIntSafe(r['Spotify daily']);
-          const totalStreams = parseIntSafe(r['Spotify total']);
-
-          if (!hist[key]) hist[key] = [];
-          hist[key].push({date:day.date, daily, streams:totalStreams});
-
-          sumDaily += daily;
-          sumTotal += totalStreams;
+        const oldMap = {};
+        oldRows.forEach(r=>{
+            const t=(r.Song||"").trim();
+            const a=(r.Album||"").trim();
+            if (!t) return;
+            oldMap[`${t}|${a}`]=parseIntSafe(r["Spotify total"]);
         });
 
-        total.push({date:day.date, daily:sumDaily, streams:sumTotal});
-      });
+        const songMap = {};
+        latestRows.forEach(r=>{
+            const t=(r.Song||"").trim();
+            const a=(r.Album||"").trim();
+            if (!t) return;
+            const key=`${t}|${a}`;
+            const total=parseIntSafe(r["Spotify total"]);
+            const daily=parseIntSafe(r["Spotify daily"]);
+            const old=oldMap[key]??0;
+            const growth = old>0 ? ((total-old)/old)*100 :
+                             total>0 ? 999999 : 0;
 
-      setHistory(hist);
-      setTotalHistory(total);
-    } catch (e) {}
-  }
+            songMap[key]={key,title:t,album:a,streams:total,daily,growth28:growth};
+        });
 
-  /* ----------------------------------------------------------
-     SORTING + FILTERING
-  ---------------------------------------------------------- */
-  function sorted(list) {
-    const arr = [...list];
-    arr.sort((a,b) => {
-      const x = a[sortKey] ?? -Infinity;
-      const y = b[sortKey] ?? -Infinity;
-      return sortDir === 'asc' ? x - y : y - x;
-    });
-    return arr;
-  }
+        const songsArr = Object.values(songMap);
 
-  const filteredSongs = sorted(
-    songs.filter(s => s.title.toLowerCase().includes(search.toLowerCase()))
-  );
-  const filteredAlbums = sorted(
-    albums.filter(a => a.title.toLowerCase().includes(search.toLowerCase()))
-  );
+        const albumMap={};
+        songsArr.forEach(s=>{
+            const a=s.album || "Unknown";
+            if (!HARDCODED_ALBUMS.includes(a)) return;
+            if (!albumMap[a])
+                albumMap[a]={key:`ALBUM::${a}`,title:a,streams:0,daily:0,tracks:0,growths:[]};
+            albumMap[a].streams+=s.streams;
+            albumMap[a].daily+=s.daily;
+            albumMap[a].tracks+=1;
+            if (s.growth28!==999999) albumMap[a].growths.push(s.growth28);
+        });
 
-  function toggleCompare(key) {
-    if (compareKeys.includes(key)) {
-      setCompareKeys(compareKeys.filter(k => k !== key));
-    } else {
-      if (compareKeys.length < MAX_COMPARE) {
-        setCompareKeys([...compareKeys, key]);
-      }
-    }
-  }
+        const albumsArr = Object.values(albumMap).map(a=>({
+            ...a,
+            growth28: a.growths.length ? (a.growths.reduce((x,y)=>x+y)/a.growths.length) : 0
+        }));
 
-  function openCompare() {
-    setShowCompare(true);
+        setSongs(songsArr);
+        setAlbums(albumsArr);
 
-    // Lazy load Chart.js
-    if (!chartLibLoaded.current) {
-      const script = document.createElement('script');
-      script.src = "https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js";
-      script.onload = () => { chartLibLoaded.current = true; };
-      document.body.appendChild(script);
-    }
-  }
-
-  /* ----------------------------------------------------------
-     RENDER
-  ---------------------------------------------------------- */
-  return (
-    <div className="max-w-6xl mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Yeat Spotify Stats</h1>
-          <div className="small muted">Latest CSV: {latestDate ?? 'loading...'}</div>
-        </div>
-
-        <div className="text-right small muted">
-          {loading ? loadingMsg : ''}
-        </div>
-      </div>
-
-      {error && <div className="text-red-400 mb-4">{error}</div>}
-
-      <div className="card mb-4">
-        <div className="flex flex-col sm:flex-row justify-between gap-4">
-          <div className="flex gap-2">
-            <button
-              className={`px-4 py-2 rounded ${tab==='songs'?'bg-white text-black':'border border-white/20'}`}
-              onClick={()=>setTab('songs')}
-            >Songs</button>
-
-            <button
-              className={`px-4 py-2 rounded ${tab==='albums'?'bg-white text-black':'border border-white/20'}`}
-              onClick={()=>setTab('albums')}
-            >Albums</button>
-          </div>
-
-          <div className="flex gap-2 items-center">
-            <input
-              className="px-3 py-2 rounded bg-black border border-white/15 small"
-              placeholder="Search..."
-              value={search}
-              onChange={e=>setSearch(e.target.value)}
-            />
-
-            <button
-              className="px-3 py-2 border border-white/20 rounded small"
-              onClick={openCompare}
-            >
-              Compare ({compareKeys.length})
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="card table-scroll">
-        <table className="min-w-full small">
-          <thead className="text-white/60">
-            <tr>
-              <th className="text-left py-2">#</th>
-              <th className="text-left py-2">Title</th>
-              {tab==='songs' && <th className="text-left py-2">Album</th>}
-              <th className="text-right py-2">Streams</th>
-              <th className="text-right py-2">Daily</th>
-              <th className="text-right py-2">28d</th>
-              <th className="text-right py-2">Compare</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {(tab==='songs'?filteredSongs:filteredAlbums).map((item, idx) => (
-              <tr key={item.key} className="border-t border-white/10 hover-glow">
-                <td className="py-3">{idx+1}</td>
-                <td className="py-3">{item.title}</td>
-
-                {tab==='songs' && (
-                  <td className="py-3 text-white/60 small">{item.album}</td>
-                )}
-
-                <td className="py-3 text-right">{fmt(item.streams)}</td>
-                <td className="py-3 text-right">{fmt(item.daily)}</td>
-
-                <td className={`py-3 text-right ${
-                  item.growth28===999999?'positive':
-                  item.growth28>=0?'positive':'negative'
-                }`}>
-                  {item.growth28===999999 ? 'new' : item.growth28.toFixed(2)+'%'}
-                </td>
-
-                <td className="py-3 text-right">
-                  <input
-                    type="checkbox"
-                    checked={compareKeys.includes(item.key)}
-                    onChange={()=>toggleCompare(item.key)}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {showCompare &&
-        <CompareModal
-          keys={compareKeys}
-          onClose={()=>setShowCompare(false)}
-          history={history}
-          songs={songs}
-          albums={albums}
-        />
-      }
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------
-   COMPARE MODAL
----------------------------------------------------------- */
-function CompareModal({ keys, onClose, history, songs, albums }) {
-  const canvasRef = React.useRef(null);
-  const chartRef = React.useRef(null);
-
-  const [mode, setMode] = React.useState('daily');
-  const [range, setRange] = React.useState('28');
-
-  React.useEffect(() => {
-    if (!window.Chart) return;
-
-    const ctx = canvasRef.current.getContext('2d');
-    if (chartRef.current) chartRef.current.destroy();
-
-    const allDates = new Set();
-    keys.forEach(k => {
-      (history[k] || []).forEach(r => allDates.add(r.date));
-    });
-
-    const sortedDates = Array.from(allDates).sort((a,b)=>new Date(a)-new Date(b));
-
-    let used = sortedDates;
-    if (range !== 'all') {
-      used = used.slice(-parseInt(range,10));
+        scanHistory(latest);
     }
 
-    const datasets = keys.map((k, i) => {
-      const rows = history[k] || [];
-      const dateMap = {};
-      rows.forEach(r => dateMap[r.date] = r.daily);
+    /* ---------------------------------------------------------
+       HISTORY SCAN (for charts)
+    --------------------------------------------------------- */
+    async function scanHistory(latest) {
+        try {
+            const anchor = new Date(latest+"T00:00:00Z");
+            const collected=[];
+            for (let i=0;i<400;i++){
+                const d=new Date(anchor);
+                d.setDate(anchor.getDate()-i);
+                const str=dateToStr(d);
+                try{
+                    const res=await fetch(`${CSV_BASE_PATH}${str}.csv?t=${Date.now()}`);
+                    if(!res.ok) break;
+                    const text=await res.text();
+                    collected.push({date:str,text});
+                }catch{ break; }
+            }
 
-      const data = used.map(d => dateMap[d] ?? null);
+            const hist={};
+            const total=[];
 
-      return {
-        label: k.startsWith('ALBUM::') ? k.replace('ALBUM::','')+' (album)' : k.split('|')[0],
-        data,
-        borderColor: [
-          '#60A5FA','#F87171','#34D399','#FBBF24','#A78BFA',
-          '#EC4899','#10B981','#F59E0B','#06B6D4','#F472B6'
-        ][i % 10],
-        tension: 0.25,
-        fill: false,
-      };
-    });
+            collected.reverse().forEach(day=>{
+                const rows=Papa.parse(day.text,{header:true,skipEmptyLines:true}).data;
+                let sumDaily=0,sumTotal=0;
 
-    chartRef.current = new Chart(ctx, {
-      type:'line',
-      data:{ labels:used, datasets },
-      options:{
-        responsive:true,
-        plugins:{ legend:{ labels:{ color:'white' }}},
-        scales:{
-          x:{ ticks:{ color:'white' }, grid:{ color:'rgba(255,255,255,0.1)' }},
-          y:{ ticks:{ color:'white' }, grid:{ color:'rgba(255,255,255,0.1)' }}
+                rows.forEach(r=>{
+                    const t=(r.Song||"").trim();
+                    const a=(r.Album||"").trim();
+                    if(!t)return;
+
+                    const key=`${t}|${a}`;
+                    const daily=parseIntSafe(r["Spotify daily"]);
+                    const totalS=parseIntSafe(r["Spotify total"]);
+
+                    // clean values
+                    const cleanDaily = daily>0?daily:null;
+                    const cleanTotal = totalS>0?totalS:null;
+
+                    if(!hist[key])hist[key]=[];
+                    hist[key].push({date:day.date,daily:cleanDaily,streams:cleanTotal});
+
+                    if(cleanDaily)sumDaily+=cleanDaily;
+                    if(cleanTotal)sumTotal+=cleanTotal;
+                });
+
+                total.push({date:day.date,daily:sumDaily,streams:sumTotal});
+            });
+
+            setHistory(hist);
+            setTotalHistory(total);
+
+        }catch(e){}
+    }
+
+
+    /* ---------------------------------------------------------
+       SORTING / FILTERING
+    --------------------------------------------------------- */
+    function sorted(list){
+        const arr=[...list];
+        arr.sort((a,b)=>{
+            const x=a[sortKey]??-Infinity;
+            const y=b[sortKey]??-Infinity;
+            return sortDir==="asc"? x-y : y-x;
+        });
+        return arr;
+    }
+
+    const filteredSongs = sorted(
+        songs.filter(s=> s.title.toLowerCase().includes(search.toLowerCase()))
+    );
+    const filteredAlbums = sorted(
+        albums.filter(a=> a.title.toLowerCase().includes(search.toLowerCase()))
+    );
+
+    function toggleSort(key){
+        if(sortKey===key){
+            setSortDir(sortDir==="asc"?"desc":"asc");
+        } else {
+            setSortKey(key);
+            setSortDir("desc");
         }
-      }
-    });
-  }, [keys, mode, range, history]);
+    }
+    function sortIndicator(key){
+        if(sortKey!==key)return "";
+        return sortDir==="asc"?" ▲":" ▼";
+    }
 
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
-         onClick={onClose}>
-      <div className="glass-modal max-w-5xl w-[95%] max-h-[90vh] overflow-auto"
-           onClick={e=>e.stopPropagation()}>
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold">Compare</h2>
-          <button className="px-3 py-1 border border-white/20 rounded small" onClick={onClose}>Close</button>
+    /* ---------------------------------------------------------
+       CHART OPEN / COMPARE LOGIC
+    --------------------------------------------------------- */
+    function openSingleChart(item){
+        setModalTitle(item.title);
+        setModalItems([item.key]);
+        setShowModal(true);
+    }
+
+    function ctrlCompare(item){
+        const type = item.key.startsWith("ALBUM::")?"album":"song";
+        const currentType = compareKeys.length
+            ? (compareKeys[0].startsWith("ALBUM::")?"album":"song")
+            : type;
+
+        if(type!==currentType)return;
+
+        let newList=[...compareKeys];
+        if(newList.includes(item.key)){
+            newList=newList.filter(k=>k!==item.key);
+        } else if(newList.length<MAX_COMPARE){
+            newList.push(item.key);
+        }
+        setCompareKeys(newList);
+
+        if(newList.length>=1){
+            setModalTitle("Compare");
+            setModalItems(newList);
+            setShowModal(true);
+        }
+    }
+
+    function onRowClick(e,item){
+        if(e.ctrlKey){
+            ctrlCompare(item);
+        } else {
+            openSingleChart(item);
+        }
+    }
+
+    /* ---------------------------------------------------------
+       TOP BAR TOTALS
+    --------------------------------------------------------- */
+    const totalStreams = songs.reduce((a,b)=>a+(b.streams||0),0);
+    const totalDaily = songs.reduce((a,b)=>a+(b.daily||0),0);
+    const totalTracks = songs.length;
+
+    function openTotalChart(type){
+        // use special key "__TOTAL_STREAMS__" or "__TOTAL_DAILY__"
+        if(type==="streams"){
+            setModalTitle("Total Streams");
+            setModalItems(["__TOTAL_STREAMS__"]);
+        }
+        if(type==="daily"){
+            setModalTitle("Total Daily Streams");
+            setModalItems(["__TOTAL_DAILY__"]);
+        }
+        setShowModal(true);
+    }
+
+    /* ---------------------------------------------------------
+       RENDER
+    --------------------------------------------------------- */
+    return (
+<div className="">
+
+    {/* TOP BAR */}
+    <div className="topbar">
+        <h1 className="text-xl font-bold">Yeat Spotify Stats</h1>
+        <div className="text-sm text-white/60">Last updated: {latestDate || "..."}</div>
+
+        <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
+            <div onClick={()=>openTotalChart("streams")} className="cursor-pointer">
+                <div className="text-white/50 uppercase text-xs">Total Streams</div>
+                <div className="text-lg font-semibold">{fmt(totalStreams)}</div>
+            </div>
+            <div onClick={()=>openTotalChart("daily")} className="cursor-pointer">
+                <div className="text-white/50 uppercase text-xs">Total Daily</div>
+                <div className="text-lg font-semibold">{fmt(totalDaily)}</div>
+            </div>
+            <div>
+                <div className="text-white/50 uppercase text-xs">Tracks</div>
+                <div className="text-lg font-semibold">{fmt(totalTracks)}</div>
+            </div>
         </div>
-
-        <div className="flex gap-3 items-center mb-3 small">
-          <span>Mode:</span>
-          <select value={mode} onChange={e=>setMode(e.target.value)}
-                  className="bg-black border border-white/20 px-2 py-1 rounded">
-            <option value="daily">Daily</option>
-          </select>
-
-          <span>Range:</span>
-          <select value={range} onChange={e=>setRange(e.target.value)}
-                  className="bg-black border border-white/20 px-2 py-1 rounded">
-            <option value="7">7</option>
-            <option value="14">14</option>
-            <option value="28">28</option>
-            <option value="90">90</option>
-            <option value="180">180</option>
-            <option value="365">365</option>
-            <option value="all">All</option>
-          </select>
-        </div>
-
-        <div style={{height:400}}>
-          <canvas ref={canvasRef}></canvas>
-        </div>
-      </div>
     </div>
-  );
+
+    {/* TAB + SEARCH */}
+    <div className="max-w-5xl mx-auto p-4">
+        <div className="flex justify-between mb-4">
+            <div className="flex gap-2">
+                <button onClick={()=>setTab("songs")}
+                    className={`px-4 py-2 rounded ${tab==="songs"?"bg-white text-black":"bg-white/10"}`}>
+                    Songs
+                </button>
+                <button onClick={()=>setTab("albums")}
+                    className={`px-4 py-2 rounded ${tab==="albums"?"bg-white text-black":"bg-white/10"}`}>
+                    Albums
+                </button>
+            </div>
+
+            <input className="bg-black border border-white/20 px-3 py-2 rounded text-sm"
+                placeholder="Search..."
+                value={search}
+                onChange={e=>setSearch(e.target.value)}
+            />
+        </div>
+
+        {/* TABLE */}
+        <div className="card table-container">
+            <table className="min-w-full text-sm">
+                <thead className="text-white/50">
+                    <tr>
+                        <th className="text-left py-2 px-2 cursor-pointer" onClick={()=>toggleSort("title")}>
+                            Title {sortIndicator("title")}
+                        </th>
+                        {tab==="songs" &&
+                        <th className="text-left py-2 px-2 cursor-pointer" onClick={()=>toggleSort("album")}>
+                            Album {sortIndicator("album")}
+                        </th>}
+                        <th className="text-right py-2 px-2 cursor-pointer" onClick={()=>toggleSort("streams")}>
+                            Streams {sortIndicator("streams")}
+                        </th>
+                        <th className="text-right py-2 px-2 cursor-pointer" onClick={()=>toggleSort("daily")}>
+                            Daily {sortIndicator("daily")}
+                        </th>
+                        <th className="text-right py-2 px-2 cursor-pointer" onClick={()=>toggleSort("growth28")}>
+                            28d Growth {sortIndicator("growth28")}
+                        </th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {(tab==="songs"?filteredSongs:filteredAlbums).map((item,idx)=>(
+                        <tr key={item.key}
+                            onClick={e=>onRowClick(e,item)}
+                            className="border-t border-white/10 hover:bg-white/10 cursor-pointer">
+                            <td className="py-3 px-2">{item.title}</td>
+                            {tab==="songs" && <td className="py-3 px-2 text-white/60">{item.album}</td>}
+                            <td className="py-3 px-2 text-right">{fmt(item.streams)}</td>
+                            <td className="py-3 px-2 text-right">{fmt(item.daily)}</td>
+                            <td className="py-3 px-2 text-right">
+                                {item.growth28===999999 ? "new" :
+                                    <span className={item.growth28>=0?"text-green-400":"text-red-400"}>
+                                        {item.growth28.toFixed(2)}%
+                                    </span>
+                                }
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {/* MODAL */}
+    {showModal &&
+        <ChartModal
+            items={modalItems}
+            title={modalTitle}
+            onClose={()=>{setShowModal(false); setCompareKeys([]);}}
+            history={history}
+            totalHistory={totalHistory}
+        />
+    }
+
+</div>
+    );
 }
 
-/* ----------------------------------------------------------
-   MOUNT APP
----------------------------------------------------------- */
-ReactDOM.createRoot(document.getElementById("root"))
-  .render(<App/>);
+/* -------------------------------------------------------------
+   CHART MODAL
+------------------------------------------------------------- */
+function ChartModal({items, title, onClose, history, totalHistory}){
+
+    const canvasRef = React.useRef(null);
+    const chartRef = React.useRef(null);
+    const [range,setRange] = React.useState("90");
+
+    React.useEffect(()=>{
+        if(!window.Chart){
+            const s=document.createElement("script");
+            s.src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js";
+            s.onload=()=>initChart();
+            document.body.appendChild(s);
+        } else initChart();
+    },[items,range]);
+
+    function initChart(){
+        if(chartRef.current) chartRef.current.destroy();
+
+        const ctx = canvasRef.current.getContext("2d");
+
+        let datasets=[];
+        let labels=[];
+
+        // special total charts
+        if(items.length===1 && items[0]==="__TOTAL_STREAMS__"){
+            const filtered=cleanTotals(totalHistory.map(r=>({date:r.date,val:r.streams})));
+            labels=filtered.map(r=>r.date);
+            datasets=[{
+                label:"Total Streams",
+                data:filtered.map(r=>r.val),
+                borderColor:"#60A5FA",
+                tension:.25
+            }];
+        }
+        else if(items.length===1 && items[0]==="__TOTAL_DAILY__"){
+            const filtered=cleanTotals(totalHistory.map(r=>({date:r.date,val:r.daily})));
+            labels=filtered.map(r=>r.date);
+            datasets=[{
+                label:"Total Daily",
+                data:filtered.map(r=>r.val),
+                borderColor:"#34D399",
+                tension:.25
+            }];
+        }
+        else {
+            // normal compare chart
+            const allDates=new Set();
+            items.forEach(k=>{
+                (history[k]||[]).forEach(r=>{
+                    if(r.daily>0) allDates.add(r.date);
+                });
+            });
+            labels=Array.from(allDates).sort((a,b)=>new Date(a)-new Date(b));
+
+            let used=labels;
+            if(range!=="all"){
+                used=labels.slice(-parseInt(range,10));
+            }
+
+            const colors=["#60A5FA","#F87171","#34D399","#FBBF24","#A78BFA",
+                          "#EC4899","#10B981","#F59E0B","#06B6D4","#F472B6"];
+
+            datasets = items.map((k,idx)=>{
+                const rows=history[k]||[];
+                const map={};
+                rows.forEach(r=>{ if(r.daily>0) map[r.date]=r.daily; });
+
+                return{
+                    label: k.startsWith("ALBUM::") ? k.replace("ALBUM::","")
+                          : k.split("|")[0],
+                    data: used.map(d=> map[d]??null ),
+                    borderColor: colors[idx%colors.length],
+                    tension:.25
+                };
+            });
+
+            labels=used;
+        }
+
+        chartRef.current=new Chart(ctx,{
+            type:"line",
+            data:{labels,datasets},
+            options:{
+                responsive:true,
+                maintainAspectRatio:false,
+                plugins:{
+                    legend:{labels:{color:"white"}}
+                },
+                scales:{
+                    x:{ticks:{color:"white"},grid:{color:"rgba(255,255,255,0.1)"}},
+                    y:{ticks:{color:"white"},grid:{color:"rgba(255,255,255,0.1)"}}
+                }
+            }
+        });
+    }
+
+    function cleanTotals(arr){
+        return arr.filter(r=> r.val>0 );
+    }
+
+    return(
+    <div className="modal-bg" onClick={onClose}>
+        <div className="modal-window" onClick={e=>e.stopPropagation()}>
+            
+            <div className="flex justify-between items-center mb-3">
+                <div className="text-xl font-semibold">{title}</div>
+                <button onClick={onClose}
+                    className="px-4 py-2 bg-white/10 border border-white/20 rounded">
+                    Close
+                </button>
+            </div>
+
+            <div className="flex gap-3 items-center text-sm mb-3">
+                <span>Range:</span>
+                <select value={range}
+                    onChange={e=>setRange(e.target.value)}
+                    className="bg-black border border-white/20 px-2 py-1 rounded">
+                    <option value="7">7</option>
+                    <option value="14">14</option>
+                    <option value="28">28</option>
+                    <option value="90">90</option>
+                    <option value="180">180</option>
+                    <option value="365">365</option>
+                    <option value="all">All</option>
+                </select>
+            </div>
+
+            <div style="width:100%; height: calc(100vh - 140px);">
+                <canvas ref={canvasRef}></canvas>
+            </div>
+
+        </div>
+    </div>);
+}
+
+/* -------------------------------------------------------------
+   MOUNT
+------------------------------------------------------------- */
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 
 </script>
 </body>
